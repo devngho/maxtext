@@ -21,6 +21,7 @@ import jax
 import datasets
 import transformers
 import grain.python as grain
+import numpy as np
 
 from input_pipeline import _input_pipeline_utils
 import multihost_dataloading
@@ -52,7 +53,10 @@ def preprocessing_pipeline(
   assert global_batch_size % global_mesh.size == 0, "Batch size should be divisible number of global devices."
 
   if shuffle:
-    dataset = dataset.shuffle(seed=data_shuffle_seed)
+    # dataset = dataset.shuffle(seed=data_shuffle_seed)
+    # instead of using dataset.shuffle, we'll shuffle by select
+    idx = np.random.RandomState(seed=data_shuffle_seed).permutation(len(dataset))
+    dataset = dataset.select(idx)
 
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(

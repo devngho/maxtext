@@ -98,6 +98,15 @@ MODEL_PARAMS_DICT = {
         "base_emb_dim": 4096,
         "base_mlp_dim": 14336,
     },
+    "mistral-nemo": {
+        "num_layers": 40,
+        "num_heads": 32,
+        "num_kv_heads": 8,
+        "dims_per_head": 128,
+        "vocab": 131072,
+        "base_emb_dim": 5120,
+        "base_mlp_dim": 14336,
+    },
     "mixtral-8x7b": {
         "num_layers": 32,
         "num_heads": 32,
@@ -251,6 +260,7 @@ def convert_to_jax_weights(base_model_path, model_size):
         [var["tok_embeddings.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=1
     )[:vocab_size, :]
   jax_weights["token_embedder"]["embedding"] = token_embedder
+  base_emb_dim = token_embedder.shape[1]
   logging.debug("Memory usage: %f GB", mem_info.memory_info().rss / (1024**3))
 
   # self attention ###############################################
@@ -272,9 +282,9 @@ def convert_to_jax_weights(base_model_path, model_size):
         [var[f"layers.{layer_idx}.attention.wv.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
     ).transpose()
 
-    wq = np.reshape(wq, [base_num_query_heads * head_dim, base_num_query_heads, head_dim])
-    wk = np.reshape(wk, [base_num_query_heads * head_dim, base_num_kv_heads, head_dim])
-    wv = np.reshape(wv, [base_num_query_heads * head_dim, base_num_kv_heads, head_dim])
+    wq = np.reshape(wq, [base_emb_dim, base_num_query_heads, head_dim])
+    wk = np.reshape(wk, [base_emb_dim, base_num_kv_heads, head_dim])
+    wv = np.reshape(wv, [base_emb_dim, base_num_kv_heads, head_dim])
     wq = permute_to_match_maxtext_rope(wq)
     wk = permute_to_match_maxtext_rope(wk)
 
@@ -283,7 +293,7 @@ def convert_to_jax_weights(base_model_path, model_size):
         axis=1,
     )
 
-    w_post = np.reshape(w_post, [base_num_query_heads * head_dim, base_num_query_heads, head_dim])
+    w_post = np.reshape(w_post, [base_emb_dim, base_num_query_heads, head_dim])
 
     if self_attention["query"]["kernel"] is None:
       stack_shape = (base_num_decoder_layers,)
