@@ -765,7 +765,7 @@ def main(argv: Sequence[str]) -> None:
     masked_config['hf_access_token'] = '[MASKED]'
     masked_config['wandb_token'] = '[MASKED]'
     wandb.login(key=config.wandb_token)
-    wandb.init(project=config.wandb_project, name=config.run_name, config=masked_config)
+    wandb.init(project=config.wandb_project, name=config.run_name, config=masked_config, settings={'_executable': 'python3'})
 
   if config.monitor_goodput and jax.process_index() == 0:
     logger_name = f"goodput_{config.run_name}"
