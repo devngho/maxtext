@@ -44,6 +44,7 @@ import optimizers
 import profiler
 import pyconfig
 import pathwaysutils  # pylint: disable=unused-import
+import wandb
 
 from vertex_tensorboard import VertexTensorboardManager
 # Placeholder: internal
@@ -140,6 +141,7 @@ def write_metrics(writer, local_metrics_file, running_gcs_metrics, metrics, step
 
   if metrics_to_write:
     write_metrics_to_tensorboard(writer, metrics_to_write, steps_to_write, config, is_training)
+    write_metrics_to_wandb(metrics_to_write, steps_to_write)
 
     if config.metrics_file:
       max_utils.write_metrics_locally(metrics_to_write, steps_to_write, config, local_metrics_file, is_training)
@@ -178,6 +180,19 @@ def write_metrics_to_tensorboard(writer, metrics, step, config, is_training=True
         max_logging.log(f"To see full metrics 'tensorboard --logdir={config.tensorboard_dir}'")
         writer.flush()
 
+
+def write_metrics_to_wandb(metrics, step):
+    """Writes metrics to tensorboard"""
+    with jax.spmd_mode("allow_all"):
+        if jax.process_index() == 0:
+            log = {}
+
+            for metric_name in metrics.get("scalar", []):
+                log[metric_name] = metrics["scalar"][metric_name]
+            for metric_name in metrics.get("scalars", []):
+                log[metric_name] = metrics["scalars"][metric_name]
+
+            wandb.log(log, step=step)
 
 def clear_buffered_metrics():
   global _buffered_step
@@ -745,6 +760,12 @@ def main(argv: Sequence[str]) -> None:
   vertex_tensorboard_manager = VertexTensorboardManager()
   if config.use_vertex_tensorboard or os.environ.get("UPLOAD_DATA_TO_TENSORBOARD"):
     vertex_tensorboard_manager.configure_vertex_tensorboard(config)
+  if config.use_wandb and jax.process_index() == 0:
+    masked_config = config.copy()
+    masked_config['hf_access_token'] = '[MASKED]'
+    masked_config['wandb_token'] = '[MASKED]'
+    wandb.login(key=config.wandb_token)
+    wandb.init(project=config.wandb_project, name=config.run_name, config=masked_config)
 
   if config.monitor_goodput and jax.process_index() == 0:
     logger_name = f"goodput_{config.run_name}"
@@ -768,6 +789,8 @@ def main(argv: Sequence[str]) -> None:
   diagnostic_config = diagnostic_configuration.DiagnosticConfig(debug_config)
   with diagnostic.diagnose(diagnostic_config):
     train_loop(config)
+  if config.use_wandb:
+    wandb.finish()
 
 
 if __name__ == "__main__":

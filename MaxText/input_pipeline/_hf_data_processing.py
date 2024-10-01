@@ -138,13 +138,12 @@ def make_hf_iterator(
     process_indices,
 ):
   """Load, preprocess dataset and return iterators"""
-  train_ds = datasets.load_dataset(
+  train_ds = datasets.load_from_disk(
       config.hf_path,
-      data_dir=config.hf_data_dir,
-      data_files=config.hf_train_files,
-      split="train",
-      streaming=True,
-      token=config.hf_access_token,
+      # data_dir=config.hf_data_dir,
+      # data_files=config.hf_train_files,
+      # split="train",
+      # token=config.hf_access_token,
   )
   train_iter = preprocessing_pipeline(
       dataloading_host_index=process_indices.index(jax.process_index()),
@@ -165,13 +164,12 @@ def make_hf_iterator(
   )
 
   if config.eval_interval > 0:
-    eval_ds = datasets.load_dataset(
-        config.hf_path,
-        data_dir=config.hf_data_dir,
-        data_files=config.hf_eval_files,
-        split=config.hf_eval_split,
-        streaming=True,
-        token=config.hf_access_token,
+    eval_ds = datasets.load_from_disk(
+        config.hf_eval_path,
+        # data_dir=config.hf_data_dir,
+        # data_files=config.hf_eval_files,
+        # split=config.hf_eval_split,
+        # token=config.hf_access_token,
     )
     if config.eval_per_device_batch_size > 0:
       eval_batch_size = config.eval_per_device_batch_size * global_mesh.size

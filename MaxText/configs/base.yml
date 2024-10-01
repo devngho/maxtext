@@ -449,3 +449,8 @@ ragged_block_size: 256
 sa_block_q: 512
 sa_block_q_dkv: 512
 sa_block_q_dq: 512
+
+# wandb configuration
+use_wandb: False
+wandb_project: ''
+wandb_token: ''
