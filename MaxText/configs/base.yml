@@ -286,11 +286,7 @@ eval_dataset_name: 'c4/en:3.0.1'
 eval_split: 'validation'
 # for HuggingFace input pipeline (dataset_type=hf)
 hf_path: ''
-hf_data_dir: ''
-hf_train_files: ''
-hf_eval_split: ''
-hf_eval_files: ''
-hf_access_token: ''
+hf_eval_path: ''
 # for Grain input pipeline (dataset_type=grain)
 grain_train_files: ''
 grain_eval_files: ''
