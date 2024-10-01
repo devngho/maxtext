@@ -58,6 +58,8 @@ def preprocessing_pipeline(
     idx = np.random.RandomState(seed=data_shuffle_seed).permutation(len(dataset))
     dataset = dataset.select(idx)
 
+  dataset = dataset.to_iterable_dataset()
+
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         tokenizer_path,
