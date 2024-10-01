@@ -655,7 +655,8 @@ def train_loop(config, state=None):
   local_metrics_file = open(config.metrics_file, "a", encoding="utf8") if config.metrics_file else None
   running_gcs_metrics = [] if config.gcs_metrics else None
 
-  # print('Training state: ', state)
+  print('sharding: ', out_shard_train)
+  print('Training state: ', state)
 
   start_step = get_first_step(state)  # this is the start_step for training
   first_profiling_step = start_step + config.skip_first_n_steps_for_profiler
