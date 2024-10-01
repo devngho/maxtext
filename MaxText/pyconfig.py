@@ -115,15 +115,11 @@ def validate_data_input(keys):
   """validate provided parameters for data input"""
   if keys["dataset_type"] == "hf":
     max_logging.log(
-        f"dataset_type set to hf, will use {keys['hf_path']=}, {keys['hf_data_dir']=} and {keys['hf_train_files']=} to read data"
+        f"dataset_type set to hf, will use {keys['hf_path']=}, {keys['hf_eval_path']=} to read data"
     )
     assert keys["hf_path"] != "", "hf_path can't be empty when dataset_type=hf"
-    if not keys["hf_train_files"]:
-      keys["hf_train_files"] = None
-    if not keys["hf_eval_files"]:
-      keys["hf_eval_files"] = None
-    if keys["hf_eval_files"]:
-      keys["hf_eval_split"] = "train"
+    assert keys["hf_eval_path"] != "", "hf_path can't be empty when dataset_type=hf"
+
     if keys["eval_interval"] > 0:
       assert keys["hf_eval_split"], "Please specify hf_eval_split or set eval_interval to <=0."
 
