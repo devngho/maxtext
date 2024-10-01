@@ -121,7 +121,7 @@ def validate_data_input(keys):
     assert keys["hf_eval_path"] != "", "hf_path can't be empty when dataset_type=hf"
 
     if keys["eval_interval"] > 0:
-      assert keys["hf_eval_split"], "Please specify hf_eval_split or set eval_interval to <=0."
+      assert keys["hf_eval_path"], "Please specify hf_eval_path or set eval_interval to <=0."
 
   elif keys["dataset_type"] == "grain":
     max_logging.log(
