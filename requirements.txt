@@ -1,3 +1,4 @@
+libtpu-nightly==0.1.dev20241001+default
 jax>=0.4.30
 jaxlib>=0.4.30
 orbax-checkpoint>=0.5.21
