@@ -761,7 +761,7 @@ def main(argv: Sequence[str]) -> None:
   if config.use_vertex_tensorboard or os.environ.get("UPLOAD_DATA_TO_TENSORBOARD"):
     vertex_tensorboard_manager.configure_vertex_tensorboard(config)
   if config.use_wandb and jax.process_index() == 0:
-    masked_config = config.copy()
+    masked_config = config.get_keys().copy()
     masked_config['hf_access_token'] = '[MASKED]'
     masked_config['wandb_token'] = '[MASKED]'
     wandb.login(key=config.wandb_token)
