@@ -59,4 +59,5 @@ DECODING_ACTIVE_SEQUENCE_INDICATOR = 1
 
 # A large negative mask value is used for masking to ensure that the
 # softmax function assigns an extremely low probability to the masked positions.
-DEFAULT_MASK_VALUE = -0.7 * float(np.finfo(np.dtype("float32")).max)
+# https://github.com/AI-Hypercomputer/maxtext/issues/614
+DEFAULT_MASK_VALUE = -jnp.inf
