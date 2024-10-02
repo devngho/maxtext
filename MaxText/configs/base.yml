@@ -303,6 +303,7 @@ log_period: 100 # Flushes Tensorboard
 # 2) Cosine decay from [learning_rate] to [learning_rate * cosine_learning_rate_final_fraction] from warmup to learning_rate_schedule_steps
 # 3) Constant learning rate of 0 from learning_rate_schedule_steps to steps.
 # The zero learning rate section can be used to more accurately measure the fully trained model's performance.
+initial_learning_rate: 3.e-6
 learning_rate: 3.e-5
 cosine_learning_rate_final_fraction: 0.1
 warmup_steps_fraction: 0.1
