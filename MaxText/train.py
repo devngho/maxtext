@@ -671,7 +671,7 @@ def train_loop(config, state=None):
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
       record_goodput(recorder, config, recorder.record_data_loading_start_time if recorder else None)
       example_batch = load_next_batch(data_iterator, example_batch, config)
-      if step == start_step: print({k: repr(example_batch[k])[:100] for k in example_batch.keys()}) # for debug
+      if step == start_step: print({k: str(example_batch[k])[:200] for k in example_batch.keys()}) # for debug
       record_goodput(recorder, config, recorder.record_data_loading_end_time if recorder else None)
       check_example_batch(config, example_batch=example_batch)
       # pylint: disable=not-callable
