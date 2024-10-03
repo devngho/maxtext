@@ -347,7 +347,7 @@ class AttentionOp(nn.Module):
           q_seq_shards=1,
           block_sizes=block_sizes,
           attn_logits_soft_cap=attn_logits_soft_cap,
-          mask_values=DEFAULT_MASK_VALUE
+          mask_value=DEFAULT_MASK_VALUE
       )
 
       return jax.vmap(splash_kernel)(query, key, value, segment_ids=decoder_segment_ids)
