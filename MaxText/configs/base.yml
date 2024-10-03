@@ -454,3 +454,5 @@ sa_block_q_dq: 512
 use_wandb: False
 wandb_project: ''
 wandb_token: ''
+
+jax_debug_nans: False

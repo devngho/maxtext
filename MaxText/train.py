@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import math
 
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports
 """Training loop and Decoding of the model."""
@@ -759,6 +760,7 @@ def main(argv: Sequence[str]) -> None:
   pyconfig.initialize(argv)
   max_utils.print_system_information()
   config = pyconfig.config
+  jax.config.update("jax_debug_nans", config.jax_debug_nans)
   validate_train_config(config)
   os.environ["TFDS_DATA_DIR"] = config.dataset_path
   vertex_tensorboard_manager = VertexTensorboardManager()
