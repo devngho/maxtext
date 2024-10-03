@@ -26,7 +26,6 @@ import numpy as np
 
 from input_pipeline import _input_pipeline_utils
 import multihost_dataloading
-from functools import partial
 import max_logging
 
 
@@ -81,11 +80,11 @@ def preprocessing_pipeline(
             batched=True,
             fn_kwargs={"hf_tokenizer": tokenizer, "max_length": max_target_length - 1, "column_name": data_column_name},
         )
+        dataset = dataset.select_columns(["input_ids"]).rename_column("input_ids", data_column_name)
     else:
         dataset = dataset.with_transform(
-            partial(_input_pipeline_utils.tokenization, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)
+            lambda x: {data_column_name: _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)["input_ids"]}
         )
-    dataset = dataset.select_columns(["input_ids"]).rename_column("input_ids", data_column_name)
   else:
     dataset = dataset.select_columns([data_column_name])
 
