@@ -24,6 +24,6 @@ mlp_activations: ["silu","linear"]
 vocab_size: 131072
 enable_dropout: False
 logits_via_embedding: False
-normalization_layer_epsilon: 1.0e-4
+normalization_layer_epsilon: 1.0e-3
 rope_max_timescale: 1_000_000
 decoder_block: "mistral"
