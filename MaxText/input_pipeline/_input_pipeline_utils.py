@@ -156,6 +156,22 @@ class HFDataSource(grain.RandomAccessDataSource):
       except StopIteration:
         self._update_shard(idx)
 
+class HFRandomAccessDataSource(grain.RandomAccessDataSource):
+  """A class that makes HuggingFace IterableDataset a grain datasource without random access support"""
+
+  def __init__(
+          self,
+          dataset: datasets.Dataset,
+  ):
+    self.dataset = dataset
+
+  def __len__(self):
+    """Return length of the HF dataset."""
+    return len(self.dataset)
+
+  def __getitem__(self, index):
+    return self.dataset[index]
+
 
 ########## Functions used by Grain pipeline
 
