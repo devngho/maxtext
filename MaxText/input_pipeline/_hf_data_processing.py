@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import math
 import os
 
 """Input pipeline using Huggingface datasets."""
@@ -132,14 +133,14 @@ def preprocessing_pipeline(
       shuffle=random_access,
       seed=data_shuffle_seed if random_access else 0,
   )
-
+  sqrt_num_threads = int(round(math.sqrt(float(num_threads))))
   dataloader = grain.DataLoader(
       data_source=dataset,
       operations=operations,
       sampler=index_sampler,
-      worker_count=1,  # only supports one worker for now, more workers results in duplicated data
+      worker_count=sqrt_num_threads if random_access else 1,  # only supports one worker for now, more workers results in duplicated data
       worker_buffer_size=1000 if random_access else 1,
-      read_options=grain.ReadOptions(num_threads=num_threads, prefetch_buffer_size=256),
+      read_options=grain.ReadOptions(num_threads=sqrt_num_threads if random_access else num_threads, prefetch_buffer_size=128),
   )
 
   multihost_gen = multihost_dataloading.MultiHostDataLoadIterator(dataloader, global_mesh)
