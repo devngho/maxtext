@@ -138,8 +138,8 @@ def preprocessing_pipeline(
       operations=operations,
       sampler=index_sampler,
       worker_count=1,  # only supports one worker for now, more workers results in duplicated data
-      worker_buffer_size=8192 if random_access else 1,
-      read_options=grain.ReadOptions(num_threads=num_threads, prefetch_buffer_size=2048),
+      worker_buffer_size=512 if random_access else 1,
+      read_options=grain.ReadOptions(num_threads=num_threads, prefetch_buffer_size=512),
   )
 
   multihost_gen = multihost_dataloading.MultiHostDataLoadIterator(dataloader, global_mesh)
