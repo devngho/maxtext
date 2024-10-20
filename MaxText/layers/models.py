@@ -338,7 +338,7 @@ class Decoder(nn.Module):
         BlockLayer,
         prevent_cse=not cfg.scan_layers,
         policy=policy,
-        static_argnums=(-1, -2, -3, -4, -5),
+        static_argnums=(-1, -2),  # deterministic and model mode are static arguments
     )
     if cfg.using_pipeline_parallelism:
       if cfg.num_layers_per_pipeline_stage == 1:
@@ -415,7 +415,8 @@ class Decoder(nn.Module):
     logits = nn.with_logical_constraint(
         logits, ("activation_embed_and_logits_batch", "activation_length", "activation_vocab")
     )
-    logits = logits.astype(jnp.float32)
+    if self.config.cast_logits_to_fp32:
+      logits = logits.astype(jnp.float32)
     return logits
 
 

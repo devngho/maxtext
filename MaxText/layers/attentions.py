@@ -384,7 +384,7 @@ class AttentionOp(nn.Module):
         head_dim=head_dim,
         num_attention_heads=self.num_query_heads,
         num_gqa_groups=self.num_kv_heads,
-        attn_mask_type="causal",  # 'causal' or 'padding'
+        attn_mask_type="padding_causal",  # 'no_mask', 'padding', 'causal', or 'padding_causal'
         attn_bias_type="NO_BIAS",  # 'no_bias', 'pre_scale_bias' or 'post_scale_bias'
         attention_dropout=self.dropout_rate,
         dropout_rng_name="aqt",
@@ -1158,15 +1158,25 @@ class Attention(nn.Module):
     )(out)
     return out_proj
 
-  def key_rotary(self, key: Array, inputs_positions: Array):
-    """Apply Rotary Embedding to key."""
-    key = RotaryEmbedding(
-        min_timescale=self.config.rope_min_timescale,
-        max_timescale=self.config.rope_max_timescale,
-        embedding_dims=self.head_dim,
-        name="key_rotary",
-    )(inputs=key, position=inputs_positions)
-    return key
+  def apply_rotary_embedding(self, inputs: Array, inputs_positions: Array, name: str):
+    if self.config.model_name.startswith("llama3.1"):
+      rotary_embedding = embeddings.LLaMARotaryEmbedding(
+          min_timescale=self.config.rope_min_timescale,
+          max_timescale=self.config.rope_max_timescale,
+          embedding_dims=self.head_dim,
+          fprop_dtype=self.dtype,
+          name=name,
+      )
+    else:
+      rotary_embedding = RotaryEmbedding(
+          min_timescale=self.config.rope_min_timescale,
+          max_timescale=self.config.rope_max_timescale,
+          embedding_dims=self.head_dim,
+          fprop_dtype=self.dtype,
+          name=name,
+      )
+    inputs = rotary_embedding(inputs, inputs_positions)
+    return inputs
 
   @nn.compact
   def __call__(
@@ -1210,13 +1220,8 @@ class Attention(nn.Module):
       value = self.kv_projection(inputs_kv, proj_name="value")
 
     # apply ROPE
-    query = RotaryEmbedding(
-        min_timescale=self.config.rope_min_timescale,
-        max_timescale=self.config.rope_max_timescale,
-        embedding_dims=self.head_dim,
-        name="query_rotary",
-    )(inputs=query, position=inputs_positions)
-    key = self.key_rotary(key, inputs_positions)
+    query = self.apply_rotary_embedding(query, inputs_positions, name="query_rotary")
+    key = self.apply_rotary_embedding(key, inputs_positions, name="key_rotary")
 
     # annotate with sharding constraint.
     query = nn.with_logical_constraint(query, self.query_axis_names)

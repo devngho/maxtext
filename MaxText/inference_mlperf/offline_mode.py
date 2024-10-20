@@ -31,12 +31,23 @@ import pandas as pd
 
 import mlperf_loadgen as lg
 # pylint: disable=no-name-in-module
+
+import warnings
+
+warnings.simplefilter("ignore", category=FutureWarning)
+
+import inspect
+
+current_dir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, parent_dir)
+
 from maxengine import create_engine_from_config_flags
 import offline_inference
 
 _MLPERF_ID = "llama2-70b"
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 sys.path.insert(0, os.getcwd())
 log = logging.getLogger("main2.py")
@@ -121,6 +132,41 @@ flags.DEFINE_string(
     required=False,
 )
 
+flags.DEFINE_integer(
+    "jax_profiler_port",
+    9999,
+    "If set, the jax.profiler port to use.",
+    required=False,
+)
+
+flags.DEFINE_bool(
+    "enable_profile",
+    False,
+    "If set, enable jax profiling.",
+    required=False,
+)
+
+flags.DEFINE_bool(
+    "skip_warmup",
+    False,
+    "Skip warmup",
+    required=False,
+)
+
+flags.DEFINE_float(
+    "tok_outlen_multiplier",
+    3.0,
+    "Multiplier for estimating max predicted output len",
+    required=False,
+)
+
+flags.DEFINE_bool(
+    "allow_skipping_queries",
+    False,
+    "Allow skipping queries which have target len greater than 2x configured max prefill len",
+    required=False,
+)
+
 scenario_map = {
     "offline": lg.TestScenario.Offline,
     "server": lg.TestScenario.Server,
@@ -134,6 +180,16 @@ def pad_tokens(tokens):
   return padded, true_length
 
 
+def _init_query_batches():
+  query_batches = {}
+  len_batch_str = FLAGS.prefill_lengths_and_batch_sizes.split("|")
+  len_batch = []
+  for lb in len_batch_str:
+    l, b = lb.split(",")
+    query_batches[(int(l), int(b))] = []
+  return query_batches
+
+
 @contextlib.contextmanager
 def timed(msg):
   log.info(msg + " start")
@@ -143,21 +199,25 @@ def timed(msg):
   log.info(msg + " done: " + str(end - start))
 
 
-def _classify_query(dataset_rows, index):
-  # return grouped indexes
+def _classify_query(dataset_rows, index, query_batches):
   sample = dataset_rows[index][1]
   input_len = sample.tok_input_length
-  total_len = sample.tok_input_length + 3 * sample.tok_output_length
-  len_batch_str = FLAGS.prefill_lengths_and_batch_sizes
-  target_inputs = [int(lb.split(",")[0]) for lb in len_batch_str.split("|")]
+  total_len = int(sample.tok_input_length + FLAGS.tok_outlen_multiplier * sample.tok_output_length)
+  query_batch_keys = list(query_batches.keys())
+  query_batch_keys.sort()
+  target_inputs = [lb[0] for lb in query_batch_keys]
   target_totals = [2 * inp for inp in target_inputs]
 
-  if total_len <= target_totals[0] and input_len <= target_inputs[0]:
-    return 0
-  elif total_len <= target_totals[1] and input_len <= target_inputs[1]:
-    return 1
-  else:
-    return 2
+  for i in range(len(target_inputs)):
+    if total_len <= target_totals[i] and input_len <= target_inputs[i]:
+      log.debug(f"Added sample of input length {input_len} total_len {total_len} for {query_batch_keys[i]}")
+      return query_batch_keys[i]
+  if input_len <= target_inputs[i]:
+    log.debug(f"Added sample of input length {input_len} total_len {total_len} for {query_batch_keys[i]}")
+    return query_batch_keys[i]
+  if not FLAGS.allow_skipping_queries:
+    assert False, f"Invalid query input_len {input_len} > max prefill_len configured {query_batch_keys[-1]}."
+  return -1
 
 
 def _pick_batch_size(num_samples, max_batch, dataset_size, sample_size):
@@ -169,7 +229,7 @@ def _pick_batch_size(num_samples, max_batch, dataset_size, sample_size):
 
 
 def get_warmup_samples(dataset):
-  groupped_queries = [[], [], []]
+  query_batches = _init_query_batches()
   pandas_rows = list(dataset.iterrows())
   input_data = {}
   for sample_id in range(len(pandas_rows)):
@@ -181,10 +241,12 @@ def get_warmup_samples(dataset):
     jax.block_until_ready(data.tokens)
   sample_id_to_input = input_data
   for sample_id in range(len(input_data)):
-    group = _classify_query(pandas_rows, sample_id)
+    group_idx = _classify_query(pandas_rows, sample_id, query_batches)
+    if group_idx == -1:
+      continue
     input_ = copy.copy(sample_id_to_input[sample_id])
     input_.id = sample_id
-    groupped_queries[group].append(input_)
+    query_batches[group_idx].append(input_)
 
   interesting_buckets = [
       0,
@@ -196,23 +258,27 @@ def get_warmup_samples(dataset):
       512,
       1024,
   ]
-  warmup_samples = [[], [], []]
-  for group_idx, group in enumerate(groupped_queries):
-    for start, end in zip(interesting_buckets[: group_idx - 3], interesting_buckets[1 : group_idx - 2]):
-      for sample in group:
+  warmup_samples = _init_query_batches()
+
+  for group_idx in query_batches:
+    prefill_len = group_idx[0]
+    idx = int(math.log2(prefill_len)) - 3
+    for start, end in zip(interesting_buckets[:idx], interesting_buckets[1 : (idx + 1)]):
+      log.debug(f"idx:{group_idx} start:{start} end:{end}")
+      for sample in query_batches[group_idx]:
         if start < sample.true_length <= end:
           warmup_samples[group_idx].append(sample)
-          log.info(f"Added sample of length {sample.true_length} for ({start}, {end}) bucket for group {group_idx}")
+          log.debug(f"Added warmup sample of length {sample.true_length} for ({start}, {end}) bucket for group {group_idx}")
           break
-    warmup_samples[group_idx].extend(groupped_queries[group_idx][:50])
+    warmup_samples[group_idx].extend(query_batches[group_idx][:50])
   return warmup_samples
 
 
 class SUT:
 
-  def __init__(self, data, offline_inf):
-    # dict of int (cache length) -> offline_inf
-    self.offline_inf = offline_inf
+  def __init__(self, data, offline_inf_instances):
+    # dict of int (cache length) -> offline_inf_instances
+    self.offline_inf_instances = offline_inf_instances
 
     # pandas dataframe, it has tok
     self._dataset = data
@@ -223,23 +289,35 @@ class SUT:
     # index to loaded data
     self._processed_data = None
 
-    # self.replicated = self.offline_inf.engine.env.sharding_by_axis(-1)
     self._sample_id_to_input = None
-    self._groupped_queries = [[], [], []]
+    self._query_batches = _init_query_batches()
 
   def issue_queries(self, queries):
     log.info("Issue queries start")
     assert self._sample_id_to_input is not None
     self._processed_data = []
     self._queries = queries
-    for q in queries:
-      group = _classify_query(self.pandas_rows, q.index)
-      input_data = copy.copy(self._sample_id_to_input[q.index])
-      input_data.id = q.id
-      self._groupped_queries[group].append(input_data)
 
-    log.info("Issue queries - classified queries")
-    assert len(self._queries) == sum(len(q) for q in self._groupped_queries)
+    num_queries = len(self._queries)
+    num_skipped_queries = 0
+    num_grouped_queries = [len(self._query_batches[b]) for b in self._query_batches]
+    log.info(f"Before Issue {num_queries} queries - classified queries {num_grouped_queries}")
+    self._query_batches = _init_query_batches()
+    for q in queries:
+      group_idx = _classify_query(self.pandas_rows, q.index, self._query_batches)
+      if group_idx == -1:
+        num_skipped_queries += 1
+        log.debug("Filtering out query of input len larger than acceptable configuration")
+      else:
+        input_data = copy.copy(self._sample_id_to_input[q.index])
+        input_data.id = q.id
+        self._query_batches[group_idx].append(input_data)
+    num_grouped_queries = [len(self._query_batches[b]) for b in self._query_batches]
+    log.info(f"Issue {num_queries} queries - classified queries {num_grouped_queries} num_skipped {num_skipped_queries}")
+
+    assert len(self._queries) - num_skipped_queries == sum(
+        num_grouped_queries
+    ), f"num_queries {num_queries} does not match num_grouped_queries {num_grouped_queries}"
     # At this point _processed_data is ready
     log.info("Issue queries end")
 
@@ -247,11 +325,12 @@ class SUT:
   def flush_queries(self):
     log.info("Flush queries start")
     start = time.perf_counter()
-    for group_idx, group in enumerate(self._groupped_queries):
+    for group_idx in self._query_batches:
+      group = self._query_batches[group_idx]
       log.info(f"Flush queries processing {group_idx} with {len(group)} samples")
-      self.offline_inf[group_idx].init_decode_state()
-      result = self.offline_inf[group_idx].batch_inference(group)
-      self.offline_inf[group_idx].decode_state = None
+      self.offline_inf_instances[group_idx].init_decode_state()
+      result = self.offline_inf_instances[group_idx].batch_inference(group, desc=f"batch-{group_idx}")
+      self.offline_inf_instances[group_idx].decode_state = None
       gc.collect()
       for key, val in result.items():
         key = int(key)
@@ -284,7 +363,7 @@ class SUT:
     log.info(f"LoadSamplesToRam finished: {end - start}s")
 
   def UnloadSamplesFromRam(self, sample_list):
-    print("UnloadSamplesFromRam called")
+    log.info("UnloadSamplesFromRam called")
     pass
 
 
@@ -299,22 +378,25 @@ def make_response(id_, response_token_ids):
   return query_sample_response
 
 
-def _count_by_bucket(dataset):
-
+def _estimated_counts_by_bucket(dataset):
   total_len = dataset.tok_input_length + dataset.tok_output_length
-
-  group1 = (total_len <= 512) & (dataset.tok_input_length <= 256)
-  group2 = (total_len <= 1024) & (dataset.tok_input_length <= 512)
+  query_batches = _init_query_batches()
+  prefix_lens = [l for l, b in list(query_batches.keys())]
+  prefix_lens.sort()
 
   # with 5 percent extra
   mult = FLAGS.total_sample_count / len(dataset) * 1.05
-
-  counts = [
-      math.ceil(len(dataset[group1]) * mult),
-      math.ceil(len(dataset[~group1 & group2]) * mult),
-      math.ceil(len(dataset[~group1 & ~group2]) * mult),
-  ]
-  return counts
+  prev_len = 0
+  total_count = 0
+  estimates = {}
+  for prefix_len in prefix_lens[:-1]:
+    target_len = 2 * prefix_len
+    condition = (total_len <= target_len) & (dataset.tok_input_length <= prefix_len)
+    count = len(dataset[condition])
+    estimates[f"{prev_len}-{prefix_len}"] = math.ceil((count - total_count) * mult)
+    total_count = count
+  estimates[f">{prefix_lens[-1]}"] = math.ceil((len(dataset) - total_count) * mult)
+  return estimates
 
 
 def main(argv):
@@ -322,6 +404,9 @@ def main(argv):
   args = FLAGS
   jax.config.update("jax_default_prng_impl", "unsafe_rbg")
   # jax.config.update("jax_explain_cache_misses", True)
+
+  if FLAGS.enable_profile:
+    server = jax.profiler.start_server(FLAGS.jax_profiler_port)
 
   settings = lg.TestSettings()
   settings.scenario = lg.TestScenario.Offline
@@ -334,28 +419,29 @@ def main(argv):
 
   log.info("dataset path: %s", FLAGS.dataset_path)
   dataset = pd.read_pickle(FLAGS.dataset_path)
-  rows = list(dataset.iterrows())
-  counts_by_bucket = _count_by_bucket(dataset)
-  log.info(f"Counts by bucket {counts_by_bucket}")
+  if FLAGS.total_sample_count < len(dataset):
+    dataset = dataset.sample(n=FLAGS.total_sample_count)
+  estimated_counts_by_bucket = _estimated_counts_by_bucket(dataset)
+  log.info(f"Dataset len {len(dataset)}, estimated counts by bucket {estimated_counts_by_bucket}")
 
-  # length_and_batch = (
-  #    (256, 216),
-  #    (512, 108),
-  #    (1024, 54),
-  # )
+  rows = list(dataset.iterrows())
   len_batch_str = FLAGS.prefill_lengths_and_batch_sizes
   log.info(f"Prefill lengths and Batch sizes: {len_batch_str}")
   log.info(f"Maxengine args: {FLAGS.maxengine_args}")
-  length_and_batch = [tuple(map(int, lb.split(","))) for lb in len_batch_str.split("|")]
-  engines = []
+
+  log.info("Get warmup samples")
+  warmup_samples = get_warmup_samples(dataset)
+  offline_inf_instances = {}
+  query_batches = _init_query_batches()
   params = None
   base_engine = None
-  for i, (length, max_batch) in enumerate(length_and_batch):
-    batch = counts_by_bucket[i]
+  # Create an engine and corresponding offline_inf_instance per batch of queries
+  for group_idx in query_batches:
+    (length, batch) = group_idx
     target_length = 2 * length
-    log.info(f"Using batch size: {max_batch} and length: {length}")
+    log.info(f"Using batch size: {batch} and length: {length}")
     engine = create_engine_from_config_flags(
-        batch_size=max_batch,
+        batch_size=batch,
         max_prefill_predict_length=length,
         max_target_length=target_length,
         args_str=FLAGS.maxengine_args,
@@ -363,22 +449,20 @@ def main(argv):
     offline_inf = offline_inference.OfflineInference(engine, params, base_engine)
     if params is None and offline_inf.params is not None:
       base_engine = engine
-    # offline_inf.dummy = True
     params = offline_inf.params
-    engines.append(offline_inf)
+    offline_inf_instances[group_idx] = offline_inf
 
-  warmup_samples = get_warmup_samples(dataset)
-  with timed("warmup"):
-    warmup_grp = 0
-    for (length, _), engine in zip(length_and_batch, engines):
-      log.info(f"warm up for {length}")
-      engine.init_decode_state()
-      engine.warmup(length, warmup_samples[warmup_grp])
-      engine.decode_state = None  # drop state
-      gc.collect()
-      warmup_grp += 1
+  if not FLAGS.skip_warmup:
+    with timed("warmup"):
+      for group_idx in offline_inf_instances:
+        (length, batch) = group_idx
+        log.info(f"warm up for {length}")
+        offline_inf_instances[group_idx].init_decode_state()
+        offline_inf_instances[group_idx].warmup(length, warmup_samples[group_idx])
+        offline_inf_instances[group_idx].decode_state = None  # drop state
+        gc.collect()
 
-  sut = SUT(dataset, engines)
+  sut = SUT(dataset, offline_inf_instances)
 
   if FLAGS.mlperf_test_mode == "accuracy":
     settings.mode = lg.TestMode.AccuracyOnly
@@ -409,13 +493,16 @@ def main(argv):
   )
   log.info("Starting Benchmark run")
   lg.StartTestWithLogSettings(lgSUT, qsl, settings, log_settings, FLAGS.audit_conf)
-  log.info(f"query counts {[len(q) for q in sut._groupped_queries]}")
+  log.info(f"query counts {[len(sut._query_batches[q]) for q in sut._query_batches]}")
   log.info("Run Completed!")
   log.info("Destroying SUT...")
   lg.DestroySUT(lgSUT)
 
   log.info("Destroying QSL...")
   lg.DestroyQSL(qsl)
+
+  if FLAGS.enable_profile:
+    jax.profiler.stop_server()
 
 
 if __name__ == "__main__":

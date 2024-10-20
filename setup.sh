@@ -86,6 +86,14 @@ fi
 # Save the script folder path of maxtext
 run_name_folder_path=$(pwd)
 
+# Install dependencies from requirements.txt
+cd $run_name_folder_path && pip install --upgrade pip
+if [[ "$MODE" == "pinned" ]]; then
+    pip3 install -U -r requirements.txt -c constraints_gpu.txt
+else
+    pip3 install -U -r requirements.txt
+fi
+
 # Uninstall existing jax, jaxlib and  libtpu-nightly
 pip3 show jax && pip3 uninstall -y jax
 pip3 show jaxlib && pip3 uninstall -y jaxlib
@@ -151,7 +159,7 @@ elif [[ $MODE == "nightly" ]]; then
     if [[ $DEVICE == "gpu" ]]; then
         echo "Installing jax-nightly, jaxlib-nightly"
         # Install jax-nightly
-        pip3 install --pre -U 'jax[cuda12]' -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+        pip install -U --pre jax jaxlib jax-cuda12-plugin[with_cuda] jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
         # Install Transformer Engine
         export NVTE_FRAMEWORK=jax
         pip3 install git+https://github.com/NVIDIA/TransformerEngine.git@stable
@@ -184,10 +192,3 @@ else
     exit 1
 fi
 
-# Install dependencies from requirements.txt
-cd $run_name_folder_path && pip install --upgrade pip
-if [[ "$MODE" == "pinned" ]]; then
-    pip3 install -U -r requirements.txt -c constraints_gpu.txt
-else
-    pip3 install -U -r requirements.txt
-fi
