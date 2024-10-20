@@ -130,7 +130,7 @@ def preprocessing_pipeline(
       shard_options=grain.ShardOptions(
           shard_index=dataloading_host_index, shard_count=dataloading_host_count, drop_remainder=False
       ),
-      shuffle=random_access,
+      shuffle=random_access and shuffle,
       seed=data_shuffle_seed if random_access else 0,
   )
   dataloader = grain.DataLoader(
@@ -218,5 +218,7 @@ def make_hf_eval_iterator(
       add_bos=config.add_bos,
       add_eos=config.add_eos,
       generate_padding_example=eval_generate_padding_example,
+      random_access=config.hf_random_access,
+      num_threads=config.hf_worker_count
   )
   return eval_iter
