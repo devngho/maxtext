@@ -138,7 +138,7 @@ def preprocessing_pipeline(
       operations=operations,
       sampler=index_sampler,
       worker_count=1,  # only supports one worker for now, more workers results in duplicated data
-      worker_buffer_size=128,
+      worker_buffer_size=1,
       read_options=grain.ReadOptions(num_threads=num_threads, prefetch_buffer_size=128),
   )
 
