@@ -157,7 +157,7 @@ class HFDataSource(grain.RandomAccessDataSource):
         self._update_shard(idx)
 
 class HFRandomAccessDataSource(grain.RandomAccessDataSource):
-  """A class that makes HuggingFace IterableDataset a grain datasource without random access support"""
+  """A class that makes HuggingFace Dataset a grain datasource wit random access support"""
 
   def __init__(
           self,
