@@ -39,4 +39,4 @@ adam_eps: 1.e-7
 adam_weight_decay: 0.1
 attention: "dot_product"
 
-weight_dtype: "bfloat16"
+weight_dtype: "float32"
