@@ -22,7 +22,7 @@ base_num_decoder_layers: 12
 head_dim: 64
 max_target_length: 2048
 mlp_activations: ["gelu"]
-vocab_size: 14592
+vocab_size: 14474
 enable_dropout: False
 logits_via_embedding: True
 normalize_embedding_logits: False
@@ -30,12 +30,12 @@ logits_dot_in_fp32: False
 normalization_layer_epsilon: 1.e-05
 use_iota_embed: True
 fused_qkv: True
-opt_type: "adam_pax"
+opt_type: "adamw"
 decoder_block: "gpt3"
 gradient_clipping_threshold: 1.
 adam_b1: 0.9
 adam_b2: 0.95
-adam_eps: 1.e-8
+adam_eps: 1.e-7
 adam_weight_decay: 0.1
 attention: "dot_product"
 
