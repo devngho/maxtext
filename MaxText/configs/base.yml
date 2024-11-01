@@ -291,6 +291,7 @@ hf_eval_path: ''
 hf_access_token: ''
 hf_random_access: True
 hf_worker_count: 1
+hf_packing: True
 # for Grain input pipeline (dataset_type=grain)
 grain_train_files: ''
 grain_eval_files: ''

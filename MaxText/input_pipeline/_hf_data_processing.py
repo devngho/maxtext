@@ -162,6 +162,8 @@ def make_hf_train_iterator(
       # token=config.hf_access_token,
   )
 
+  max_logging.log(f'HF train rows: {len(train_ds)}')
+
   train_iter = preprocessing_pipeline(
       dataloading_host_index=process_indices_train.index(jax.process_index()),
       dataloading_host_count=len(process_indices_train),
@@ -179,7 +181,8 @@ def make_hf_train_iterator(
       add_eos=config.add_eos,
       generate_padding_example=True,
       random_access=config.hf_random_access,
-      num_threads=config.hf_worker_count
+      num_threads=config.hf_worker_count,
+      packing=config.hf_packing,
   )
   return train_iter
 
@@ -197,6 +200,8 @@ def make_hf_eval_iterator(
       # streaming=True,
       # token=config.hf_access_token,
   )
+
+  max_logging.log(f'HF eval rows: {len(eval_ds)}')
 
   if config.eval_steps > 0:
     eval_generate_padding_example = True
@@ -219,6 +224,7 @@ def make_hf_eval_iterator(
       add_eos=config.add_eos,
       generate_padding_example=eval_generate_padding_example,
       random_access=config.hf_random_access,
-      num_threads=config.hf_worker_count
+      num_threads=config.hf_worker_count,
+      packing=config.hf_packing,
   )
   return eval_iter
