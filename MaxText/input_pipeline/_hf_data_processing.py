@@ -164,6 +164,9 @@ def make_hf_train_iterator(
 
   max_logging.log(f'HF train rows: {len(train_ds)}')
 
+  if config.drop_last_batch:
+    max_logging.log(f"Dropping last batch for train. Will use {len(train_ds) - len(train_ds) % (config.global_batch_size_to_load // jax.process_count())} examples.")
+
   train_iter = preprocessing_pipeline(
       dataloading_host_index=process_indices_train.index(jax.process_index()),
       dataloading_host_count=len(process_indices_train),
@@ -183,6 +186,7 @@ def make_hf_train_iterator(
       random_access=config.hf_random_access,
       num_threads=config.hf_worker_count,
       packing=config.hf_packing,
+      drop_remainder=config.drop_last_batch,
   )
   return train_iter
 
@@ -202,6 +206,9 @@ def make_hf_eval_iterator(
   )
 
   max_logging.log(f'HF eval rows: {len(eval_ds)}')
+
+  if config.drop_last_batch:
+      max_logging.log(f"Dropping last batch for eval. Will use {len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval // jax.process_count())} examples.")
 
   if config.eval_steps > 0:
     eval_generate_padding_example = True
@@ -226,5 +233,6 @@ def make_hf_eval_iterator(
       random_access=config.hf_random_access,
       num_threads=config.hf_worker_count,
       packing=config.hf_packing,
+      drop_remainder=config.drop_last_batch,
   )
   return eval_iter
