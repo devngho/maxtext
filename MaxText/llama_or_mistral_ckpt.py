@@ -148,6 +148,24 @@ MODEL_PARAMS_DICT = {
         "base_mlp_dim": 16384,
         "num_experts": 8,
     },
+    "llama-tiny-jamo": {
+        "num_layers": 12,
+        "num_heads": 12,
+        "num_kv_heads": 12,
+        "dims_per_head": 64,
+        "vocab": 14474,
+        "base_emb_dim": 768,
+        "base_mlp_dim": 3072,
+    },
+    "llama-tiny-nonjamo": {
+        "num_layers": 12,
+        "num_heads": 12,
+        "num_kv_heads": 12,
+        "dims_per_head": 64,
+        "vocab": 14374,
+        "base_emb_dim": 768,
+        "base_mlp_dim": 3072,
+    },
 }
 
 SIMULATED_CPU_DEVICES_COUNT = 16

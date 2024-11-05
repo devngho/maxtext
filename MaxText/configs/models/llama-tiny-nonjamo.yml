@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# model config for gpt3-small
+# model config for llama-tiny-nonjamo
 
 base_emb_dim: 768
 base_num_query_heads: 12
@@ -21,22 +21,20 @@ base_mlp_dim: 3072
 base_num_decoder_layers: 12
 head_dim: 64
 max_target_length: 2048
-mlp_activations: ["gelu"]
+mlp_activations: ["silu","linear"]
 vocab_size: 14374
 enable_dropout: False
-logits_via_embedding: True
-normalize_embedding_logits: False
-logits_dot_in_fp32: False
+logits_via_embedding: False
 normalization_layer_epsilon: 1.e-05
-use_iota_embed: True
-fused_qkv: True
+decoder_block: "llama2"
+attention: "dot_product"
+
+weight_dtype: "float32"
+logical_axis_rules: [['norm', 'fsdp']]
+
 opt_type: "adamw"
-decoder_block: "gpt3"
 gradient_clipping_threshold: 1.
 adam_b1: 0.9
 adam_b2: 0.95
 adam_eps: 1.e-5
 adam_weight_decay: 0.01
-attention: "dot_product"
-
-weight_dtype: "float32"
