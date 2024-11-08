@@ -77,6 +77,8 @@ def load_hf_model(model_size):
     model = MistralForCausalLM.from_pretrained("mistralai/Mistral-7B-v0.1")
   elif model_size == "mixtral-8x7b":
     model = AutoModelForCausalLM.from_pretrained("mistralai/Mixtral-8x7B-v0.1", device_map="auto")
+  elif model_size == "llama-tiny":
+    model = LlamaForCausalLM.from_pretrained(f"devngho/llama-tiny-random")
   else:
     raise NotImplementedError
   return model

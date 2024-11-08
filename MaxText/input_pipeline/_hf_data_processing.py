@@ -165,9 +165,9 @@ def make_hf_train_iterator(
   max_logging.log(f'HF train rows: {len(train_ds)}')
 
   if config.drop_last_batch:
-    remain = len(train_ds) - len(train_ds) % (config.global_batch_size_to_load // jax.process_count())
+    remain = len(train_ds) - len(train_ds) % ((config.global_batch_size_to_load * config.hf_worker_count) // jax.process_count()) if config.hf_worker_count > 1 else len(train_ds) - len(train_ds) % (config.global_batch_size_to_load // jax.process_count())
+
     if config.hf_worker_count > 1:
-        remain = remain - remain % config.hf_worker_count
         max_logging.log(f"HF train: Dropping last batch and {config.hf_worker_count} workers. Will use {remain} examples.")
     else:
         max_logging.log(f"HF train: Dropping last batch for train. Will use {remain} examples.")
@@ -221,10 +221,9 @@ def make_hf_eval_iterator(
   max_logging.log(f'HF eval rows: {len(eval_ds)}')
 
   if config.drop_last_batch:
-    remain = len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval // jax.process_count())
+    remain = len(eval_ds) - len(eval_ds) % ((config.global_batch_size_to_load_eval * config.hf_eval_worker_count) // jax.process_count()) if config.hf_eval_worker_count > 1 else len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval // jax.process_count())
 
     if config.hf_eval_worker_count > 1:
-        remain = remain - remain % config.hf_eval_worker_count
         max_logging.log(f"HF eval: Dropping last batch and {config.hf_eval_worker_count} workers. Will use {remain} examples.")
     else:
         max_logging.log(f"HF eval: Dropping last batch for eval. Will use {remain} examples.")
