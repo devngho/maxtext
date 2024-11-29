@@ -79,6 +79,8 @@ def load_hf_model(model_size):
     model = AutoModelForCausalLM.from_pretrained("mistralai/Mixtral-8x7B-v0.1", device_map="auto")
   elif model_size == "llama-tiny":
     model = LlamaForCausalLM.from_pretrained(f"devngho/llama-tiny-random")
+  elif model_size == "llama-tiny-polyglot":
+    model = LlamaForCausalLM.from_pretrained(f"devngho/llama-tiny-polyglot-random")
   else:
     raise NotImplementedError
   return model

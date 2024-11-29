@@ -148,7 +148,7 @@ MODEL_PARAMS_DICT = {
         "base_mlp_dim": 16384,
         "num_experts": 8,
     },
-    "llama-tiny-jamo": {
+    "llama-tiny": {
         "num_layers": 12,
         "num_heads": 12,
         "num_kv_heads": 12,
@@ -157,12 +157,12 @@ MODEL_PARAMS_DICT = {
         "base_emb_dim": 768,
         "base_mlp_dim": 3072,
     },
-    "llama-tiny-nonjamo": {
+    "llama-tiny-polyglot": {
         "num_layers": 12,
         "num_heads": 12,
         "num_kv_heads": 12,
         "dims_per_head": 64,
-        "vocab": 14374,
+        "vocab": 30000,
         "base_emb_dim": 768,
         "base_mlp_dim": 3072,
     },
