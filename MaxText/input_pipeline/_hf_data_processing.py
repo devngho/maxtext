@@ -165,12 +165,15 @@ def make_hf_train_iterator(
   max_logging.log(f'HF train rows: {len(train_ds)}')
 
   if config.drop_last_batch:
-    remain = len(train_ds) - len(train_ds) % ((config.global_batch_size_to_load * config.hf_worker_count) // jax.process_count()) if config.hf_worker_count > 1 else len(train_ds) - len(train_ds) % (config.global_batch_size_to_load // jax.process_count())
+    remain = len(train_ds) - len(train_ds) % (
+                config.global_batch_size_to_load * config.hf_worker_count) if config.hf_worker_count > 1 else len(train_ds) - len(train_ds) % config.global_batch_size_to_load
 
     if config.hf_worker_count > 1:
         max_logging.log(f"HF train: Dropping last batch and {config.hf_worker_count} workers. Will use {remain} examples.")
     else:
         max_logging.log(f"HF train: Dropping last batch for train. Will use {remain} examples.")
+
+    train_ds = train_ds.take(remain)
   else:
     remain = len(train_ds)
 
@@ -179,6 +182,8 @@ def make_hf_train_iterator(
         max_logging.log(f"HF train: Will use {remain} examples for {config.hf_worker_count} workers.")
     else:
         max_logging.log(f"HF train: Will use {remain} examples.")
+
+    train_ds = train_ds.take(remain)
 
   train_iter = preprocessing_pipeline(
       dataloading_host_index=process_indices_train.index(jax.process_index()),
@@ -221,12 +226,14 @@ def make_hf_eval_iterator(
   max_logging.log(f'HF eval rows: {len(eval_ds)}')
 
   if config.drop_last_batch:
-    remain = len(eval_ds) - len(eval_ds) % ((config.global_batch_size_to_load_eval * config.hf_eval_worker_count) // jax.process_count()) if config.hf_eval_worker_count > 1 else len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval // jax.process_count())
+    remain = len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval * config.hf_eval_worker_count) if config.hf_eval_worker_count > 1 else len(eval_ds) - len(eval_ds) % config.global_batch_size_to_load_eval
 
     if config.hf_eval_worker_count > 1:
         max_logging.log(f"HF eval: Dropping last batch and {config.hf_eval_worker_count} workers. Will use {remain} examples.")
     else:
         max_logging.log(f"HF eval: Dropping last batch for eval. Will use {remain} examples.")
+
+    eval_ds = eval_ds.take(remain)
   else:
     remain = len(eval_ds)
 
@@ -235,6 +242,8 @@ def make_hf_eval_iterator(
       max_logging.log(f"HF eval: Will use {remain} examples for {config.hf_eval_worker_count} workers.")
     else:
       max_logging.log(f"HF eval: Will use {remain} examples.")
+
+    eval_ds = eval_ds.take(remain)
 
 
   if config.eval_steps > 0:
