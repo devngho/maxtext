@@ -158,12 +158,12 @@ MODEL_PARAMS_DICT = {
         "base_mlp_dim": 3072,
     },
     "llama-tiny-polyglot": {
-        "num_layers": 12,
-        "num_heads": 12,
-        "num_kv_heads": 12,
+        "num_layers": 16,
+        "num_heads": 24,
+        "num_kv_heads": 24,
         "dims_per_head": 64,
         "vocab": 30000,
-        "base_emb_dim": 768,
+        "base_emb_dim": 1536,
         "base_mlp_dim": 3072,
     },
 }

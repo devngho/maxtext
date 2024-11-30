@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# model config for llama-tiny-jamo
+# model config for llama-tiny-polyglot
+# 423618048 parameters without token embeddings
 
-base_emb_dim: 768
-base_num_query_heads: 12
-base_num_kv_heads: 12
+base_emb_dim: 1536
+base_num_query_heads: 24
+base_num_kv_heads: 24
 base_mlp_dim: 3072
-base_num_decoder_layers: 12
+base_num_decoder_layers: 16
 head_dim: 64
 max_target_length: 2048
 mlp_activations: ["silu","linear"]
