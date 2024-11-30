@@ -287,3 +287,23 @@ def get_nested_value(dictionary, nested_key, default=None):
       return default
     current_level = current_level[key]
   return current_level
+
+def calc_token_count(example_batch):
+  return jax.numpy.sum(example_batch["s_token_count"])
+
+def setup_batch_metrics_creator(config, mesh):
+  """Setup additional batch metrics for training"""
+  data_pspec = P(*config.data_sharding)
+  data_sharding = jax.tree_util.tree_map(lambda p: jax.sharding.NamedSharding(mesh, p), data_pspec)
+  in_shardings = (data_sharding, )  # batch
+  out_shardings = None  # metrics
+
+  metrics_creator = {}
+
+  if config.hf_token_counter:
+    metrics_creator['token_count'] = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings)
+
+  def get_metrics(batch):
+    return {k: v(batch) for k, v in metrics_creator.items()}
+
+  return get_metrics

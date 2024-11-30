@@ -618,6 +618,8 @@ def train_loop(config, state=None):
         donate_argnums_eval,
     ) = maxtext_utils.get_functional_eval_with_signature(eval_step, mesh, state_mesh_annotations, model, config)
 
+  batch_metrics_creator = maxtext_utils.setup_batch_metrics_creator(config, mesh)
+
   num_model_parameters = max_utils.calculate_num_params_from_pytree(state.params)
   max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")
   per_device_tflops, _, _ = maxtext_utils.calculate_tflops_training_per_device(config)
@@ -658,6 +660,7 @@ def train_loop(config, state=None):
 
   local_metrics_file = open(config.metrics_file, "a", encoding="utf8") if config.metrics_file else None
   running_gcs_metrics = [] if config.gcs_metrics else None
+  cumulative_metrics = {"scalar": {}, "scalars": {}}
 
   start_step = get_first_step(state)  # this is the start_step for training
   first_profiling_step = start_step + config.skip_first_n_steps_for_profiler
@@ -677,10 +680,7 @@ def train_loop(config, state=None):
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
       record_goodput(recorder, config, recorder.record_data_loading_start_time if recorder else None)
       example_batch = load_next_batch(data_iterator, example_batch, config)
-      # if step == start_step:
-      #     from jax.experimental.multihost_utils import process_allgather
-      #     batch_ = process_allgather(example_batch)
-      #     print({k: str(batch_[k])[:200] for k in batch_.keys()})
+      batch_metrics = batch_metrics_creator(example_batch)
       record_goodput(recorder, config, recorder.record_data_loading_end_time if recorder else None)
       check_example_batch(config, example_batch=example_batch)
       # pylint: disable=not-callable
@@ -688,6 +688,12 @@ def train_loop(config, state=None):
       record_goodput(recorder, config, recorder.record_step_start_time if recorder else None, step)
       with mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
         state, metrics = p_train_step(state, example_batch, nextrng)
+
+    for k, v in batch_metrics.items():
+      metrics["scalar"][f"batch/{k}"] = v
+      if k in config.cumulative_metrics:
+        cumulative_metrics["scalar"][f"batch/{k}"] = cumulative_metrics["scalar"].get(f"batch/{k}", 0) + v
+        metrics["scalar"][f"batch/{k}_cumulative"] = cumulative_metrics["scalar"][f"batch/{k}"]
 
     new_time = datetime.datetime.now()
     record_scalar_metrics(

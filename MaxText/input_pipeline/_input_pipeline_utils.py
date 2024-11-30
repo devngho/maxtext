@@ -75,6 +75,7 @@ class HFNormalizeFeatures(grain.MapTransform):
     return {
         "inputs": np.asarray(features[self.column_name], dtype=np.int32),
         "targets": np.asarray(features[self.column_name], dtype=np.int32),
+        "s_token_count": np.uint64(features["s_token_count"]),
     }
 
 
@@ -250,7 +251,7 @@ class PadToMaxLength(grain.MapTransform):
     data["targets_segmentation"] = np.ones(data["targets"].shape, dtype=np.int32)
     data["targets_position"] = np.arange(data["targets"].shape[0], dtype=np.int32)
     for key, _ in data.items():
-      data[key] = _pad(data[key], self.max_length)
+      data[key] = _pad(data[key], self.max_length) if not key.startswith("s_") else data[key]
     return data
 
 

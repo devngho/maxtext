@@ -294,6 +294,7 @@ hf_random_access: True
 hf_worker_count: 1
 hf_eval_worker_count: 1
 hf_packing: True
+hf_token_counter: True
 # for Grain input pipeline (dataset_type=grain)
 grain_train_files: ''
 grain_eval_files: ''
@@ -461,3 +462,5 @@ wandb_project: ''
 wandb_token: ''
 
 jax_debug_nans: False
+
+cumulative_metrics: ['token_count']

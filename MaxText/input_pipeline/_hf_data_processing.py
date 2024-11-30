@@ -83,9 +83,12 @@ def preprocessing_pipeline(
         )
         dataset = dataset.select_columns(["input_ids"]).rename_column("input_ids", data_column_name)
     else:
-        dataset = dataset.with_transform(
-            lambda x: {data_column_name: _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)["input_ids"]}
-        )
+        def transform(x):
+            tok = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)["input_ids"]
+
+            return {data_column_name: tok, "s_token_count": len(tok)}
+
+        dataset = dataset.with_transform(transform)
   else:
     dataset = dataset.select_columns([data_column_name])
 
@@ -165,23 +168,9 @@ def make_hf_train_iterator(
   max_logging.log(f'HF train rows: {len(train_ds)}')
 
   if config.drop_last_batch:
-    remain = len(train_ds) - len(train_ds) % (
-                config.global_batch_size_to_load * config.hf_worker_count) if config.hf_worker_count > 1 else len(train_ds) - len(train_ds) % config.global_batch_size_to_load
+    remain = len(train_ds) - len(train_ds) % config.global_batch_size_to_load
 
-    if config.hf_worker_count > 1:
-        max_logging.log(f"HF train: Dropping last batch and {config.hf_worker_count} workers. Will use {remain} examples.")
-    else:
-        max_logging.log(f"HF train: Dropping last batch for train. Will use {remain} examples.")
-
-    train_ds = train_ds.take(remain)
-  else:
-    remain = len(train_ds)
-
-    if config.hf_worker_count > 1:
-        remain = remain - remain % config.hf_worker_count
-        max_logging.log(f"HF train: Will use {remain} examples for {config.hf_worker_count} workers.")
-    else:
-        max_logging.log(f"HF train: Will use {remain} examples.")
+    max_logging.log(f"HF train: Dropping last batch for train. Will use {remain} examples.")
 
     train_ds = train_ds.take(remain)
 
@@ -226,25 +215,11 @@ def make_hf_eval_iterator(
   max_logging.log(f'HF eval rows: {len(eval_ds)}')
 
   if config.drop_last_batch:
-    remain = len(eval_ds) - len(eval_ds) % (config.global_batch_size_to_load_eval * config.hf_eval_worker_count) if config.hf_eval_worker_count > 1 else len(eval_ds) - len(eval_ds) % config.global_batch_size_to_load_eval
+    remain = len(eval_ds) - len(eval_ds) % config.global_batch_size_to_load_eval
 
-    if config.hf_eval_worker_count > 1:
-        max_logging.log(f"HF eval: Dropping last batch and {config.hf_eval_worker_count} workers. Will use {remain} examples.")
-    else:
-        max_logging.log(f"HF eval: Dropping last batch for eval. Will use {remain} examples.")
+    max_logging.log(f"HF eval: Dropping last batch for eval. Will use {remain} examples.")
 
     eval_ds = eval_ds.take(remain)
-  else:
-    remain = len(eval_ds)
-
-    if config.hf_eval_worker_count > 1:
-      remain = remain - remain % config.hf_eval_worker_count
-      max_logging.log(f"HF eval: Will use {remain} examples for {config.hf_eval_worker_count} workers.")
-    else:
-      max_logging.log(f"HF eval: Will use {remain} examples.")
-
-    eval_ds = eval_ds.take(remain)
-
 
   if config.eval_steps > 0:
     eval_generate_padding_example = True
