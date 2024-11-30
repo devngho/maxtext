@@ -93,7 +93,7 @@ def preprocessing_pipeline(
         def transform(x):
             tok = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)["input_ids"]
 
-            return {data_column_name: tok, "s_token_count": [len(tok[i]) for i in range(len(tok))]}
+            return {data_column_name: tok, "s_token_count": [[len(tok[i])] for i in range(len(tok))]}
 
         dataset = dataset.with_transform(transform)
   else:
