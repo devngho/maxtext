@@ -51,19 +51,26 @@ def preprocessing_pipeline(
     drop_remainder=False,
     generate_padding_example=False,
     random_access=True,
+    epoch=1,
 ):
   """pipeline for preprocessing HF dataset"""
 
   assert global_batch_size % global_mesh.size == 0, "Batch size should be divisible number of global devices."
 
+  dataset_list = [dataset] * epoch
+
   if shuffle and not random_access:
     # dataset = dataset.shuffle(seed=data_shuffle_seed)
     # instead of using dataset.shuffle, we'll shuffle by select
-    idx = np.random.RandomState(seed=data_shuffle_seed).permutation(len(dataset))
-    dataset = dataset.select(idx)
+    for i in range(epoch):
+        idx = np.random.RandomState(seed=data_shuffle_seed + i).permutation(len(dataset))
+        dataset_list[i] = dataset_list[i].select(idx)
+
 
   if not random_access:
-    dataset = dataset.to_iterable_dataset()
+      dataset_list = [d.to_iterable_dataset() for d in dataset_list]
+
+  dataset = datasets.concatenate_datasets(dataset_list)
 
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -194,6 +201,7 @@ def make_hf_train_iterator(
       num_threads=config.hf_worker_count,
       packing=config.hf_packing,
       drop_remainder=config.drop_last_batch,
+      epoch=config.epoch,
   )
   return train_iter
 

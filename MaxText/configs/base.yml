@@ -300,6 +300,8 @@ grain_train_files: ''
 grain_eval_files: ''
 grain_worker_count: 1
 
+epoch: 1 # for hf now
+
 # Training loop
 steps: 150_001 # If set to -1 then will inherit value from learning_rate_schedule_steps
 log_period: 100 # Flushes Tensorboard
