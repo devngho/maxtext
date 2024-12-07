@@ -120,7 +120,7 @@ def preprocessing_pipeline(
     operations.append(
         grain.experimental.PackAndBatchOperation(
             batch_size=global_batch_size // jax.process_count(),
-            length_struct={"inputs": max_target_length, "targets": max_target_length, "s_token_count": np.iinfo(np.uint64).max},
+            length_struct={"inputs": max_target_length, "targets": max_target_length, "s_token_count": max_target_length},
         )
     )
     operations.append(_input_pipeline_utils.ReformatPacking())
