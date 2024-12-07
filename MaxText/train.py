@@ -771,6 +771,8 @@ def train_loop(config, state=None):
       prof.deactivate()
 
   if checkpoint_manager is not None:
+    # save last checkpoint
+    save_checkpoint(checkpoint_manager, int(config.steps), state, config.dataset_type, data_iterator, config)
     checkpoint_manager.wait_until_finished()
   write_metrics(writer, local_metrics_file, running_gcs_metrics, metrics, config.steps - 1, config)  # final step metrics
   max_utils.close_summary_writer(writer)
@@ -781,6 +783,7 @@ def train_loop(config, state=None):
 
 def main(argv: Sequence[str]) -> None:
   jax.config.update("jax_default_prng_impl", "unsafe_rbg")
+  jax.config.update("jax_enable_x64", True) # for counting tokens well
   os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
   if "xla_tpu_spmd_rng_bit_generator_unsafe" not in os.environ.get("LIBTPU_INIT_ARGS", ""):
     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS", "") + " --xla_tpu_spmd_rng_bit_generator_unsafe=true"

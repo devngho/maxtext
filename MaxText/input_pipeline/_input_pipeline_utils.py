@@ -228,6 +228,7 @@ class ReformatPacking(grain.MapTransform):
         "targets_segmentation": data[1]["targets"],
         "inputs_position": data[2]["inputs"],
         "targets_position": data[2]["targets"],
+        "s_token_count": data[0]["s_token_count"],
     }
 
 
