@@ -672,7 +672,7 @@ def setup_decode_state(model, config, rng, mesh, checkpoint_manager):
   return state, state_mesh_annotations
 
 
-def setup_training_state(model, data_iterator, tx, config, rng, mesh, checkpoint_manager):
+def setup_training_state(model, data_iterator, tx, config, rng, mesh, checkpoint_manager, step=None):
   is_training = True
   return setup_initial_state(
       model,
@@ -683,6 +683,7 @@ def setup_training_state(model, data_iterator, tx, config, rng, mesh, checkpoint
       mesh,
       checkpoint_manager,
       is_training,
+      step,
   )
 
 
@@ -695,6 +696,7 @@ def setup_initial_state(
     mesh,
     checkpoint_manager,
     is_training=True,
+    step=None,
 ):
   """We initialize the model and optimizer state, and optionally load from a
   checkpoint as necessary.

@@ -86,7 +86,7 @@ def load_hf_model(model_size):
   return model
 
 
-def load_model_state(config):
+def load_model_state(config, step):
   """
   Loads the MaxText model's TrainState from the Orbax checkpoint
   """
@@ -244,23 +244,24 @@ def convert_state_to_hf(training_state, model_size):
   return hf_model_params
 
 
-def convert_orbax_hf(hf_model_path, config):
+def convert_orbax_hf(hf_model_path, step, config):
   """
   Landing function to convert MaxText model's checkpoint to HuggingFace format
   """
   hf_model = load_hf_model(config.model_name)
-  training_state = load_model_state(config)
+  training_state = load_model_state(config, step)
   new_hf_model_params = convert_state_to_hf(training_state, config.model_name)
   print(f"Saving HuggingFace model to path = {hf_model_path}")
   hf_model.save_pretrained(hf_model_path, state_dict=new_hf_model_params)
 
 
 def main(argv: Sequence[str]):
-  pyconfig.initialize(argv[:-1])
-  hf_model_path = argv[-1].split("=")[1]
-  print(f"Will save converted HuggingFace checkpoint to path = {hf_model_path}")
+  pyconfig.initialize(argv[:-2])
+  hf_model_path = argv[-2].split("=")[1]
+  step = int(argv[-1].split("=")[1])
+  print(f"Will save converted HuggingFace checkpoint to path = {hf_model_path} at step = {step}")
 
-  convert_orbax_hf(hf_model_path, pyconfig.config)
+  convert_orbax_hf(hf_model_path, step, pyconfig.config)
 
 
 if __name__ == "__main__":

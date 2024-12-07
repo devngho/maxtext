@@ -76,7 +76,7 @@ def _possibly_unroll_params(config, training_state, training_state_annotations, 
   jax.tree_util.tree_map(lambda x: x.delete(), training_state_layers)
 
 
-def _read_train_checkpoint(config, checkpoint_manager, mesh):
+def _read_train_checkpoint(config, checkpoint_manager, mesh, step=None):
   """Read training checkpoint at path defined by load_full_state_path."""
   # Model and Optimizer definition
   quant = quantizations.configure_quantization(config)
