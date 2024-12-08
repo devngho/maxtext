@@ -76,6 +76,7 @@ class HFNormalizeFeatures(grain.MapTransform):
         "inputs": np.asarray(features[self.column_name], dtype=np.int32),
         "targets": np.asarray(features[self.column_name], dtype=np.int32),
         "s_token_count": np.uint64(features["s_token_count"]),
+        "s_rows_count": np.uint64(features["s_rows_count"]),
     }
 
 
@@ -229,6 +230,7 @@ class ReformatPacking(grain.MapTransform):
         "inputs_position": data[2]["inputs"],
         "targets_position": data[2]["targets"],
         "s_token_count": data[0]["s_token_count"],
+        "s_rows_count": data[0]["s_rows_count"],
     }
 
 

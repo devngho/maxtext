@@ -57,21 +57,6 @@ def preprocessing_pipeline(
 
   assert global_batch_size % global_mesh.size == 0, "Batch size should be divisible number of global devices."
 
-  dataset_list = [dataset] * epoch
-
-  if shuffle and not random_access:
-    # dataset = dataset.shuffle(seed=data_shuffle_seed)
-    # instead of using dataset.shuffle, we'll shuffle by select
-    for i in range(epoch):
-        idx = np.random.RandomState(seed=data_shuffle_seed + i).permutation(len(dataset))
-        dataset_list[i] = dataset_list[i].select(idx)
-
-
-  if not random_access:
-      dataset_list = [d.to_iterable_dataset() for d in dataset_list]
-
-  dataset = datasets.concatenate_datasets(dataset_list)
-
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         tokenizer_path,
@@ -93,7 +78,7 @@ def preprocessing_pipeline(
         def transform(x):
             tok = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_name)["input_ids"]
 
-            return {data_column_name: tok, "s_token_count": [[len(tok[i])] for i in range(len(tok))]}
+            return {data_column_name: tok, "s_token_count": [[len(tok[i])] for i in range(len(tok))], "s_rows_count": [[1] for _ in range(len(tok))]}
 
         dataset = dataset.with_transform(transform)
   else:
@@ -120,7 +105,7 @@ def preprocessing_pipeline(
     operations.append(
         grain.experimental.PackAndBatchOperation(
             batch_size=global_batch_size // jax.process_count(),
-            length_struct={"inputs": max_target_length, "targets": max_target_length, "s_token_count": max_target_length},
+            length_struct={"inputs": max_target_length, "targets": max_target_length, "s_token_count": max_target_length, "s_rows_count": max_target_length},
         )
     )
     operations.append(_input_pipeline_utils.ReformatPacking())
@@ -136,7 +121,7 @@ def preprocessing_pipeline(
   # dummy_index_sampler is used as an input place holder for grain.Dataloader
   index_sampler = grain.IndexSampler(
       num_records=len(dataset),
-      num_epochs=1,
+      num_epochs=epoch,
       shard_options=grain.ShardOptions(
           shard_index=dataloading_host_index, shard_count=dataloading_host_count, drop_remainder=False
       ),
@@ -148,7 +133,7 @@ def preprocessing_pipeline(
       operations=operations,
       sampler=index_sampler,
       worker_count=num_threads if random_access else 1,  # only supports one worker for now, more workers results in duplicated data
-      worker_buffer_size=1,
+      worker_buffer_size=128,
       read_options=grain.ReadOptions(num_threads=1 if random_access else num_threads, prefetch_buffer_size=128),
   )
 
@@ -173,13 +158,6 @@ def make_hf_train_iterator(
   )
 
   max_logging.log(f'HF train rows: {len(train_ds)}')
-
-  if config.drop_last_batch:
-    remain = len(train_ds) - len(train_ds) % config.global_batch_size_to_load
-
-    max_logging.log(f"HF train: Dropping last batch for train. Will use {remain} examples.")
-
-    train_ds = train_ds.take(remain)
 
   train_iter = preprocessing_pipeline(
       dataloading_host_index=process_indices_train.index(jax.process_index()),
@@ -221,13 +199,6 @@ def make_hf_eval_iterator(
   )
 
   max_logging.log(f'HF eval rows: {len(eval_ds)}')
-
-  if config.drop_last_batch:
-    remain = len(eval_ds) - len(eval_ds) % config.global_batch_size_to_load_eval
-
-    max_logging.log(f"HF eval: Dropping last batch for eval. Will use {remain} examples.")
-
-    eval_ds = eval_ds.take(remain)
 
   if config.eval_steps > 0:
     eval_generate_padding_example = True
