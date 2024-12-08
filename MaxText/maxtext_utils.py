@@ -306,7 +306,7 @@ def setup_batch_metrics_creator(config, mesh):
   if config.hf_token_counter:
     metrics_creator['token_count'] = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings)
   if config.hf_row_counter:
-      metrics_creator['rows_count'] = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_sharedings)
+      metrics_creator['rows_count'] = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_shardings)
 
   def get_metrics(batch):
     return {k: v(batch) for k, v in metrics_creator.items()}
