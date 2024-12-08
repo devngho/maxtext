@@ -15,6 +15,7 @@ limitations under the License.
 """
 import math
 import os
+from typing import List, Union
 
 """Input pipeline using Huggingface datasets."""
 
@@ -56,6 +57,19 @@ def preprocessing_pipeline(
   """pipeline for preprocessing HF dataset"""
 
   assert global_batch_size % global_mesh.size == 0, "Batch size should be divisible number of global devices."
+
+  dataset_list: List[Union[datasets.Dataset, datasets.IterableDataset]] = [dataset] * epoch
+
+  if shuffle:
+      # dataset = dataset.shuffle(seed=data_shuffle_seed)
+      # instead of using dataset.shuffle, we'll shuffle by select
+      for i in range(epoch):
+          idx = np.random.RandomState(seed=data_shuffle_seed + i).permutation(len(dataset))
+          dataset_list[i] = dataset_list[i].select(idx, keep_in_memory=True)
+  if not random_access:
+    dataset_list = [d.to_iterable_dataset() for d in dataset_list]
+
+  dataset = datasets.concatenate_datasets(dataset_list)
 
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -121,12 +135,12 @@ def preprocessing_pipeline(
   # dummy_index_sampler is used as an input place holder for grain.Dataloader
   index_sampler = grain.IndexSampler(
       num_records=len(dataset),
-      num_epochs=epoch,
+      num_epochs=1,
       shard_options=grain.ShardOptions(
           shard_index=dataloading_host_index, shard_count=dataloading_host_count, drop_remainder=False
       ),
-      shuffle=random_access and shuffle,
-      seed=data_shuffle_seed if random_access else 0,
+      shuffle=False, # already shuffled
+      seed=0,
   )
   dataloader = grain.DataLoader(
       data_source=dataset,
