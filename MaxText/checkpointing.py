@@ -19,7 +19,7 @@ limitations under the License.
 from typing import Any, Optional, Union
 from absl import flags
 from etils import epath
-from flax.training import orbax_utils, train_state
+from flax.training import train_state
 import grain.python as grain
 import jax
 import max_logging
@@ -27,6 +27,7 @@ from multihost_dataloading import MultiHostDataLoadIterator
 import numpy as np
 import orbax.checkpoint as ocp
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
+import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
 # pylint: disable=too-many-positional-arguments
 
@@ -91,7 +92,7 @@ def create_orbax_emergency_checkpoint_manager(
     persistent_save_interval_steps: int,
     orbax_logger: Optional[abstract_logger.AbstractLogger] = None,
 ):
-  """Returns an emergency checkpoint."""
+  """Returns an emergency checkpoint manager."""
   flags.FLAGS.experimental_orbax_use_distributed_process_id = True
   max_logging.log("Creating emergency checkpoint manager...")
 
@@ -99,7 +100,7 @@ def create_orbax_emergency_checkpoint_manager(
       local=LocalCheckpointOptions(save_interval_steps=local_save_interval_steps),
       persistent=PersistentCheckpointOptions(save_interval_steps=persistent_save_interval_steps),
   )
-  emergency_mngr = emergency_checkpoint_manager.CheckpointManager(
+  manager = emergency_checkpoint_manager.CheckpointManager(
       local_checkpoint_dir,
       epath.Path(persistent_checkpoint_dir),
       global_mesh=global_mesh,
@@ -109,7 +110,36 @@ def create_orbax_emergency_checkpoint_manager(
   )
 
   max_logging.log("Emergency checkpoint manager created!")
-  return emergency_mngr
+  return manager
+
+
+def create_orbax_emergency_replicator_checkpoint_manager(
+    local_checkpoint_dir: str,
+    save_interval_steps: int,
+    global_mesh: jax.sharding.Mesh,
+):
+  """Returns an emergency replicator checkpoint manager."""
+  flags.FLAGS.experimental_orbax_use_distributed_process_id = True
+  max_logging.log("Creating emergency replicator checkpoint manager...")
+
+  options = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManagerOptions(
+      save_interval_steps=save_interval_steps,
+  )
+  manager = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager(
+      epath.Path(local_checkpoint_dir),
+      options,
+      global_mesh=global_mesh,
+  )
+
+  max_logging.log("Emergency replicator checkpoint manager created!")
+  return manager
+
+
+def print_save_message(step, async_checkpointing):
+  if async_checkpointing:
+    max_logging.log(f"Started an asynchronous checkpoint save for step {step}")
+  else:
+    max_logging.log(f"Saved a checkpoint at step {step}.")
 
 
 def _find_idx(array: np.ndarray, replica_axis_idx: int):
@@ -146,7 +176,7 @@ def load_state_if_possible(
     abstract_unboxed_pre_state: train_state.TrainState,
     enable_single_replica_ckpt_restoring: Optional[bool] = False,
     dataset_type: Optional[str] = "tfds",
-    step: Optional[int] = None,
+    step: int = -1,  # -1 means latest
 ):
   """Loads TrainState as possible from the inputs.
 
@@ -172,18 +202,9 @@ def load_state_if_possible(
   if checkpoint_manager is not None:
     max_logging.log("checkpoint manager exists so trying to load this run's existing checkpoint")
 
-    step_to_load = checkpoint_manager.latest_step() if step is None else step
-
-    if step_to_load is not None:
-      if checkpoint_manager.latest_step() == step_to_load:
-        max_logging.log(
-            f"restoring from this run's directory latest step \
-            {step_to_load}"
-        )
-      else:
-        max_logging.log(
-            f"restoring from this run's directory step {step_to_load}"
-        )
+    step = checkpoint_manager.latest_step() if step < 0 else step
+    if step is not None:
+      max_logging.log(f"restoring from this run's directory step {step}")
 
       def map_to_pspec(data):
         pspec = data.sharding.spec
@@ -217,7 +238,7 @@ def load_state_if_possible(
       if isinstance(checkpoint_manager, emergency_checkpoint_manager.CheckpointManager):
         return (
             checkpoint_manager.restore(
-                step_to_load,
+                step,
                 args=ocp.args.PyTreeRestore(item=abstract_unboxed_pre_state, restore_args=restore_args),
             ),
             None,
@@ -225,11 +246,11 @@ def load_state_if_possible(
       if (
           dataset_type == "grain"
           and data_iterator is not None
-          and (checkpoint_manager.directory / str(step_to_load) / "iter").exists()
+          and (checkpoint_manager.directory / str(step) / "iter").exists()
       ):
         return (
             checkpoint_manager.restore(
-                step_to_load,
+                step,
                 args=ocp.args.Composite(
                     items=ocp.args.PyTreeRestore(
                         item=abstract_unboxed_pre_state,
@@ -243,7 +264,7 @@ def load_state_if_possible(
       else:
         return (
             checkpoint_manager.restore(
-                step_to_load,
+                step,
                 args=ocp.args.Composite(
                     items=ocp.args.PyTreeRestore(
                         item=abstract_unboxed_pre_state,
@@ -287,7 +308,7 @@ def setup_checkpoint_logger(config):
 #     orbax_cloud_logger = cloud_logger.CloudLogger(options=options)
 #     max_logging.log("Successfully set up checkpoint cloud logger.")
 #     return orbax_cloud_logger
-# 
+#
 #   return orbax_cloud_logger
 
 
@@ -312,6 +333,5 @@ def save_params_to_path(checkpoint_dir, params):
   """Save decode params in checkpoint at specified path."""
   assert checkpoint_dir, "checkpoint_dir is not defined."
   orbax_checkpointer = ocp.PyTreeCheckpointer()
-  save_args = orbax_utils.save_args_from_target({"params": params})
-  orbax_checkpointer.save(checkpoint_dir, {"params": params}, save_args=save_args, force=True)
+  orbax_checkpointer.save(checkpoint_dir, {"params": params}, force=True)
   print(f"Quantized params checkpoint saved at: {checkpoint_dir}")

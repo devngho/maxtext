@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 """ Common Max Utils needed by multiple modules"""
+import shutil
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -202,6 +203,12 @@ def parse_gcs_bucket_and_prefix(destination_gcs_name):
   return bucket, key
 
 
+def add_trailing_slash(path):
+  if not path.endswith("/"):
+    return path + "/"
+  return path
+
+
 def upload_blob(destination_gcs_name, source_file_name):
   """Uploads a file to a GCS location"""
   bucket_name, prefix_name = parse_gcs_bucket_and_prefix(destination_gcs_name)
@@ -209,6 +216,34 @@ def upload_blob(destination_gcs_name, source_file_name):
   bucket = storage_client.get_bucket(bucket_name)
   blob = bucket.blob(prefix_name)
   blob.upload_from_filename(source_file_name)
+
+
+def upload_dump(local_dir, target_dir, module_name=None, delete_local_after=True, all_host_upload=False):
+  """Uploads a directory to a GCS location, with an optional filter"""
+  if not all_host_upload and jax.process_index() != 0:
+    return
+  storage_client = storage.Client()
+  bucket_name, prefix_name = parse_gcs_bucket_and_prefix(target_dir)
+  bucket = storage_client.get_bucket(bucket_name)
+  if all_host_upload:
+    hostname = socket.gethostname()  # Alternatively can use jax.process_id()
+    prefix_name = os.path.join(prefix_name, hostname)
+    target_dir = os.path.join(target_dir, hostname)
+  max_logging.log(f"Uploading HLO Dump to {target_dir}...")
+  for root, _, files in os.walk(local_dir):
+    for file in files:
+      if module_name and module_name not in file:
+        continue
+      else:
+        max_logging.log(f"Uploading {file}")
+      local_path = os.path.join(root, file)
+      relative_path = os.path.relpath(local_path, local_dir)
+      blob_name = os.path.join(prefix_name, relative_path)
+      blob = bucket.blob(blob_name)
+      blob.upload_from_filename(local_path)
+  max_logging.log(f"HLO Dump Uploaded to {target_dir}!")
+  if delete_local_after:
+    shutil.rmtree(local_dir)
 
 
 def maybe_initialize_jax_distributed_system(raw_keys):
@@ -219,16 +254,22 @@ def maybe_initialize_jax_distributed_system(raw_keys):
 
   For CPUs, we call jax.distributed.initialize() explicitly, with the specified arguments.
   """
+  if raw_keys["skip_jax_distributed_system"]:
+    max_logging.log("Skipping jax distributed system due to skip_jax_distributed_system=True flag.")
+    return
+  if raw_keys["inference_benchmark_test"]:
+    # Disable initialization for inference benmark test.
+    return
   if raw_keys["compile_topology"]:
     # Don't initialize jax distributed with AOT compilation
     return
   if is_gpu_backend(raw_keys):
     max_logging.log("Attempting to initialize the jax distributed system for GPU backend...")
-    initialize_jax_for_gpu()
+    initialize_jax_for_gpu(raw_keys)
     max_logging.log("Jax distributed system initialized on GPU!")
   elif is_cpu_backend(raw_keys):
     max_logging.log("Attempting to initialize the jax distributed system for CPU backend...")
-    initialize_jax_for_cpu()
+    initialize_jax_for_cpu(raw_keys)
     max_logging.log("Jax distributed system initialized on CPUs!")
   elif (
       raw_keys["enable_checkpointing"]
@@ -238,13 +279,13 @@ def maybe_initialize_jax_distributed_system(raw_keys):
   ) or raw_keys["hardware"] == "gpu_multiprocess":
     max_logging.log("Attempting to initialize the jax distributed system...")
     if not raw_keys["enable_emergency_checkpoint"]:
-      jax.distributed.initialize()
+      jax.distributed.initialize(initialization_timeout=raw_keys["jax_distributed_initialization_timeout"])
     else:
       initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys)
     max_logging.log("Jax distributed system initialized!")
 
 
-def initialize_jax_for_gpu():
+def initialize_jax_for_gpu(raw_keys):
   """Jax distributed initialize for GPUs."""
   if os.environ.get("JAX_COORDINATOR_IP") is not None:
     coordinator_ip = str(os.getenv("JAX_COORDINATOR_IP"))
@@ -253,11 +294,12 @@ def initialize_jax_for_gpu():
         coordinator_address=f"{coordinator_ip}:{coordinator_port}",
         num_processes=int(os.getenv("NNODES")),
         process_id=int(os.getenv("NODE_RANK")),
+        initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
     )
     max_logging.log(f"JAX global devices: {jax.devices()}")
 
 
-def initialize_jax_for_cpu():
+def initialize_jax_for_cpu(raw_keys):
   """Jax distributed initialize for CPUs. Includes retries until the coordinator is ready."""
   coordinator_ip_address = get_coordinator_ip_address()
   coordinator_address = coordinator_ip_address + ":1234"  # JAX coordinator port used in XPK
@@ -272,6 +314,7 @@ def initialize_jax_for_cpu():
       coordinator_address=coordinator_address,
       process_id=pid,
       num_processes=int(os.environ.get("JAX_PROCESS_COUNT")),
+      initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
   )
 
 
@@ -288,7 +331,11 @@ def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
         f"Using {process_id} as the process_id and {coordinator_address} as the"
         " coordinator_address to initialize JAX distributed runtime..."
     )
-    jax.distributed.initialize(coordinator_address=coordinator_address, process_id=int(process_id))
+    jax.distributed.initialize(
+        coordinator_address=coordinator_address,
+        process_id=int(process_id),
+        initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
+    )
     if raw_keys["use_replicator_service"]:
       REPLICATOR_FILE = "replicator.yaml"
       TEMP_FILE = REPLICATOR_FILE + ".tmp"
@@ -324,7 +371,7 @@ def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
         "Initializing JAX distributed runtime without args when emergency checkpointing is"
         " enabled. This should not happen and your workload may have unexpected behavior."
     )
-    jax.distributed.initialize()
+    jax.distributed.initialize(initialization_timeout=raw_keys["jax_distributed_initialization_timeout"])
 
   ocp.multihost.initialize_runtime_to_distributed_ids()
   ocp.multihost.initialize_distributed_to_device_ids()
@@ -416,10 +463,10 @@ def fill_unspecified_mesh_axes(parallelism_vals, target_product, parallelism_typ
     parallelism_vals[parallelism_vals.index(-1)] = int(determined_val)
 
   target_type = "slices" if parallelism_type == "DCN" else "devices per slice"
-  assert (
-      np.prod(parallelism_vals) == target_product
-  ), f"Number of {target_type} {target_product} does not match\
-    the product of the {parallelism_type} parallelism {np.prod(parallelism_vals)}"
+  assert np.prod(parallelism_vals) == target_product, (
+      f"Number of {target_type} {target_product} does not match"
+      f" the product of the {parallelism_type} parallelism {np.prod(parallelism_vals)}"
+  )
 
   return parallelism_vals
 
@@ -525,39 +572,18 @@ def create_device_mesh(config, devices=None):
   if devices is None:
     devices = jax.devices()
   num_devices = len(devices)
-  num_slices = config.num_slices
+  num_slices = 1 if config.inference_benchmark_test else config.num_slices
   num_devices_per_slice = num_devices // num_slices
 
   multi_slice_env = num_slices > 1
 
-  dcn_parallelism = [
-      config.dcn_data_parallelism,
-      config.dcn_pipeline_parallelism,
-      config.dcn_fsdp_parallelism,
-      config.dcn_fsdp_transpose_parallelism,
-      config.dcn_sequence_parallelism,
-      config.dcn_tensor_parallelism,
-      config.dcn_expert_parallelism,
-      config.dcn_autoregressive_parallelism,
-  ]
-  ici_parallelism = [
-      config.ici_data_parallelism,
-      config.ici_pipeline_parallelism,
-      config.ici_fsdp_parallelism,
-      config.ici_fsdp_transpose_parallelism,
-      config.ici_sequence_parallelism,
-      config.ici_tensor_parallelism,
-      config.ici_expert_parallelism,
-      config.ici_autoregressive_parallelism,
-  ]
-
   # Find possible unspecified parallelisms
-  ici_parallelism = fill_unspecified_mesh_axes(ici_parallelism, num_devices_per_slice, "ICI")
+  ici_parallelism = fill_unspecified_mesh_axes(config.ici_parallelism.copy(), num_devices_per_slice, "ICI")
 
   allow_split_physical_axes = config.allow_split_physical_axes if config.allow_split_physical_axes else False
 
   if multi_slice_env:
-    dcn_parallelism = fill_unspecified_mesh_axes(dcn_parallelism, num_slices, "DCN")
+    dcn_parallelism = fill_unspecified_mesh_axes(config.dcn_parallelism.copy(), num_slices, "DCN")
     if is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
       mesh = create_custom_device_mesh(ici_parallelism, dcn_parallelism, devices, config.custom_mesh)
     else:
@@ -1043,15 +1069,15 @@ def save_quantized_checkpoint_if_configured(config, params):
 
 
 def print_mem_stats(label: str):
-  print(f"\nMemstats: {label}:")
+  max_logging.log(f"\nMemstats: {label}:")
   try:
     for d in jax.local_devices():
       stats = d.memory_stats()
       used = round(stats["bytes_in_use"] / 2**30, 2)
       limit = round(stats["bytes_limit"] / 2**30, 2)
-      print(f"\tUsing (GB) {used} / {limit} ({used/limit:%}) on {d}")
+      max_logging.log(f"\tUsing (GB) {used} / {limit} ({used/limit:%}) on {d}")
   except (RuntimeError, KeyError, TypeError) as ex:
-    print(f"\tMemstats unavailable, error: {ex}")
+    max_logging.log(f"\tMemstats unavailable, error: {ex}")
 
 
 def print_system_information():

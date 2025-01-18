@@ -7,6 +7,7 @@
 run_name="trillium_llama2-70b"
 dry_run=false
 enable_profiler=false
+enable_batch_prefill=false
 enable_xla_flags=false
 single_bucket=false
 token_multiplier=3.0
@@ -28,19 +29,24 @@ helpFunction()
    exit 1
 }
 
-while getopts "nptsxr:m:b:" opt
-do
-  case "$opt" in
-      n ) dry_run=true ;;
-      p ) enable_profiler=true ;;
-      t ) test_mode=true ;;
-      s ) single_bucket=true ;;
-      x ) enable_xla_flags=true ;;
-      r ) run_name="$OPTARG" ;;
-      m ) token_multiplier="$OPTARG" ;;
-      b ) benchmark_type="$OPTARG" ;;
-      ? ) helpFunction ;; # Print helpFunction in case parameter is non-existent
-  esac
+
+for arg in "$@"; do
+    case $arg in
+        -n) dry_run=true ;;
+        -p) enable_profiler=true ;;
+        -t) test_mode=true ;;
+        -s) single_bucket=true ;;
+        -x) enable_xla_flags=true ;;
+        -c) enable_batch_prefill=true ;;
+        -r=*|--run=*) run_name="${arg#*=}" ;;
+        -r|--run) shift; run_name="$1" ;;
+        -m=*|--multiplier=*) token_multiplier="${arg#*=}" ;;
+        -m|--multiplier) shift; token_multiplier="$1" ;;
+        -b=*|--benchmark=*) benchmark_type="${arg#*=}" ;;
+        -b|--benchmark) shift; benchmark_type="$1" ;;
+        -h|--help) helpFunction ;;
+    esac
+    shift
 done
 
 # Validate benchmark type
@@ -62,6 +68,10 @@ fi
 
 if "$test_mode"; then
     RUN_OPTIONS="${RUN_OPTIONS} -t "
+fi
+
+if "$enable_batch_prefill"; then
+    RUN_OPTIONS="${RUN_OPTIONS} -c "
 fi
 
 if "$single_bucket"; then
@@ -100,13 +110,13 @@ run_benchmark() {
     local type=$1
     case "$type" in
         "performance")
-            $cmd bash llama_offline_run.sh -r benchmarks_performance_${RUN_DESC} ${RUN_OPTIONS}
+            $cmd bash llama_offline_run.sh ${RUN_OPTIONS} -r benchmarks_performance_${RUN_DESC}
             ;;
         "audit")
             $cmd bash llama_offline_run.sh -r benchmarks_audit_${RUN_DESC} -d
             ;;
         "accuracy")
-            $cmd bash llama_offline_run.sh -r benchmarks_accuracy_${RUN_DESC} -a
+            $cmd bash llama_offline_run.sh -r benchmarks_accuracy_${RUN_DESC} -a  
             ;;
     esac
 }
