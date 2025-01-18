@@ -711,6 +711,7 @@ def setup_initial_state(
     mesh: jax.devices() mesh
     checkpoint_manager: an Orbax checkpointing.CheckpointManager object
     is_training: True to initialize training state, False for decode state
+    step: the step to restore to. If None, restore the latest checkpoint.
 
   Returns:
     state: the initialized train state
@@ -731,6 +732,7 @@ def setup_initial_state(
         unboxed_abstract_state,
         config.enable_single_replica_ckpt_restoring,
         config.dataset_type,
+        step
     )
 
     if restored:

@@ -37,7 +37,7 @@ LocalCheckpointOptions = emergency_checkpoint_manager.LocalCheckpointOptions
 PersistentCheckpointOptions = emergency_checkpoint_manager.PersistentCheckpointOptions
 
 abstract_logger = ocp.logging.abstract_logger
-cloud_logger = ocp.logging.cloud_logger
+# cloud_logger = ocp.logging.cloud_logger
 
 
 def create_orbax_checkpoint_manager(
@@ -269,23 +269,26 @@ def load_state_if_possible(
     return None, None
 
 
-def setup_checkpoint_logger(config) -> cloud_logger.CloudLogger | None:
-  """Setup checkpoint logger.
-  Args:
-    config
-  Returns:
-    CloudLogger
-  """
-  orbax_cloud_logger = None
-  max_logging.log("Setting up checkpoint logger...")
-  if config.enable_checkpoint_cloud_logger:
-    logger_name = f"goodput_{config.run_name}"
-    options = cloud_logger.CloudLoggerOptions(job_name=config.run_name, logger_name=logger_name)
-    orbax_cloud_logger = cloud_logger.CloudLogger(options=options)
-    max_logging.log("Successfully set up checkpoint cloud logger.")
-    return orbax_cloud_logger
+def setup_checkpoint_logger(config):
+    return None
 
-  return orbax_cloud_logger
+# def setup_checkpoint_logger(config) -> cloud_logger.CloudLogger | None:
+#   """Setup checkpoint logger.
+#   Args:
+#     config
+#   Returns:
+#     CloudLogger
+#   """
+#   orbax_cloud_logger = None
+#   max_logging.log("Setting up checkpoint logger...")
+#   if config.enable_checkpoint_cloud_logger:
+#     logger_name = f"goodput_{config.run_name}"
+#     options = cloud_logger.CloudLoggerOptions(job_name=config.run_name, logger_name=logger_name)
+#     orbax_cloud_logger = cloud_logger.CloudLogger(options=options)
+#     max_logging.log("Successfully set up checkpoint cloud logger.")
+#     return orbax_cloud_logger
+# 
+#   return orbax_cloud_logger
 
 
 def load_params_from_path(load_parameters_from_path, abstract_unboxed_params):
