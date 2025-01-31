@@ -557,4 +557,4 @@ wandb_token: ''
 
 jax_debug_nans: False
 
-cumulative_metrics: ['token_count_text', "rows_count_text"]
+cumulative_metrics: ['tokens_count_text', "rows_count_text"]
