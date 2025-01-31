@@ -304,7 +304,7 @@ def calc_token_count(example_batch, column_name="text"):
 def calc_rows(example_batch, column_name="text"):
   return jax.numpy.sum(example_batch["s_rows_count_"+column_name])
 
-def setup_batch_metrics_creator(config, mesh):
+def setup_batch_metrics_creator(config, mesh, is_eval=False):
   """Setup additional batch metrics for training"""
   data_pspec = P(*config.data_sharding)
   data_sharding = jax.tree_util.tree_map(lambda p: jax.sharding.NamedSharding(mesh, p), data_pspec)
@@ -315,11 +315,11 @@ def setup_batch_metrics_creator(config, mesh):
 
   if config.hf_token_counter:
     calc = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
-    for column_name in config.data_column_names:
+    for column_name in config.train_data_columns if not is_eval else config.eval_data_columns:
       metrics_creator[f"tokens_count_{column_name}"] = functools.partial(calc, column_name=column_name)
   if config.hf_row_counter:
     calc = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
-    for column_name in config.data_column_names:
+    for column_name in config.train_data_columns if not is_eval else config.eval_data_columns:
       metrics_creator[f"rows_count_{column_name}"] = functools.partial(calc, column_name=column_name)
 
   def get_metrics(batch):

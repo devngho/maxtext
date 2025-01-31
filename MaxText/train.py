@@ -827,7 +827,7 @@ def train_loop(config, state=None):
         donate_argnums_eval,
     ) = maxtext_utils.get_functional_eval_with_signature(eval_step, mesh, state_mesh_shardings, model, config)
 
-  batch_metrics_creator = maxtext_utils.setup_batch_metrics_creator(config, mesh)
+  batch_metrics_creator = maxtext_utils.setup_batch_metrics_creator(config, mesh, is_eval=False) # this is not used in the eval loop
 
   num_model_parameters = max_utils.calculate_num_params_from_pytree(state.params)
   max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")
