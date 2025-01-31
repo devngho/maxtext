@@ -78,11 +78,12 @@ def preprocessing_pipeline(
         )
         dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
+        data_column_names_ = tuple(data_column_names)
         def transform(x):
-            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names)
+            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_)
 
-            token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names}
-            rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names}
+            token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names_}
+            rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names_}
 
             ids.update(token_counts)
             ids.update(rows_counts)
