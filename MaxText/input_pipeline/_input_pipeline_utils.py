@@ -249,8 +249,7 @@ class ReformatPacking(grain.MapTransform):
 
   def map(self, data):
     ret = {
-        "s_token_count": data[0]["s_token_count"],
-        "s_rows_count": data[0]["s_rows_count"],
+      column: data[0][column] for column in self.column_names if column.startswith("s_")
     }
 
     for col in self.column_names:
