@@ -60,6 +60,8 @@ def preprocessing_pipeline(
 
   assert global_batch_size % global_mesh.size == 0, "Batch size should be divisible number of global devices."
 
+  data_column_names_ = tuple(data_column_names)
+
   if tokenize:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         tokenizer_path,
@@ -78,7 +80,6 @@ def preprocessing_pipeline(
         )
         dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
-        data_column_names_ = tuple(data_column_names)
         def transform(x):
             ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_)
 
@@ -119,14 +120,14 @@ def preprocessing_pipeline(
     operations.append(grain.MapOperation(lists2array))
 
   if packing and not use_dpo:
-    length_struct = {col: max_target_length for col in (list(data_column_names) + ["s_token_count_"+data_column_names[0], "s_rows_count_"+data_column_names[0]])}
+    length_struct = {col: max_target_length for col in (list(data_column_names) + ["s_token_count_"+data_column_names_[0], "s_rows_count_"+data_column_names_[0]])}
     operations.append(
         grain.experimental.PackAndBatchOperation(
             batch_size=global_batch_size // jax.process_count(),
             length_struct=length_struct,
         )
     )
-    operations.append(_input_pipeline_utils.ReformatPacking(list(data_column_names) + ["s_token_count_"+column_names for column_names in data_column_names] + ["s_rows_count_"+column_names for column_names in data_column_names]))
+    operations.append(_input_pipeline_utils.ReformatPacking(list(data_column_names) + ["s_token_count_"+column_names for column_names in data_column_names_] + ["s_rows_count_"+column_names for column_names in data_column_names_]))
   else:
     operations.append(_input_pipeline_utils.PadToMaxLength(max_target_length))
     operations.append(grain.Batch(batch_size=global_batch_size // jax.process_count(), drop_remainder=drop_remainder))
