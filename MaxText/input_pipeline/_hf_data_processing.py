@@ -125,7 +125,7 @@ def preprocessing_pipeline(
             length_struct=length_struct,
         )
     )
-    operations.append(_input_pipeline_utils.ReformatPacking(data_column_names))
+    operations.append(_input_pipeline_utils.ReformatPacking(list(data_column_names) + ["s_token_count_"+column_names for column_names in data_column_names] + ["s_rows_count_"+column_names for column_names in data_column_names]))
   else:
     operations.append(_input_pipeline_utils.PadToMaxLength(max_target_length))
     operations.append(grain.Batch(batch_size=global_batch_size // jax.process_count(), drop_remainder=drop_remainder))
