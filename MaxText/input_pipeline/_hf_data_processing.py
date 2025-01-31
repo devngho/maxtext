@@ -74,14 +74,20 @@ def preprocessing_pipeline(
         dataset = dataset.map(
             _input_pipeline_utils.tokenization,
             batched=True,
-            fn_kwargs={"hf_tokenizer": tokenizer, "max_length": max_target_length - 1, "column_name": data_column_names},
+            fn_kwargs={"hf_tokenizer": tokenizer, "max_length": max_target_length - 1, "column_names": data_column_names},
         )
-        dataset = dataset.select_columns(["input_ids"]).rename_column("input_ids", data_column_names)
+        dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
         def transform(x):
-            tok = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_name=data_column_names)["input_ids"]
+            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names)
 
-            return {data_column_names: tok, "s_token_count": [[len(tok[i])] for i in range(len(tok))], "s_rows_count": [[1] for _ in range(len(tok))]}
+            token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names}
+            rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names}
+
+            ids.update(token_counts)
+            ids.update(rows_counts)
+
+            return ids
 
         dataset = dataset.with_transform(transform)
   else:
@@ -112,7 +118,7 @@ def preprocessing_pipeline(
     operations.append(grain.MapOperation(lists2array))
 
   if packing and not use_dpo:
-    length_struct = {col: max_target_length for col in (list(data_column_names) + ["s_token_count", "s_rows_count"])}
+    length_struct = {col: max_target_length for col in (list(data_column_names) + ["s_token_count_"+data_column_names[0], "s_rows_count_"+data_column_names[0]])}
     operations.append(
         grain.experimental.PackAndBatchOperation(
             batch_size=global_batch_size // jax.process_count(),

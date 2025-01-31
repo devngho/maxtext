@@ -298,11 +298,11 @@ def get_nested_value(dictionary, nested_key, default=None):
     current_level = current_level[key]
   return current_level
 
-def calc_token_count(example_batch):
-  return jax.numpy.sum(example_batch["s_token_count"])
+def calc_token_count(example_batch, column_name="text"):
+  return jax.numpy.sum(example_batch["s_token_count_"+column_name])
 
-def calc_rows(example_batch):
-  return jax.numpy.sum(example_batch["s_rows_count"])
+def calc_rows(example_batch, column_name="text"):
+  return jax.numpy.sum(example_batch["s_rows_count_"+column_name])
 
 def setup_batch_metrics_creator(config, mesh):
   """Setup additional batch metrics for training"""
@@ -314,9 +314,13 @@ def setup_batch_metrics_creator(config, mesh):
   metrics_creator = {}
 
   if config.hf_token_counter:
-    metrics_creator['token_count'] = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings)
+    calc = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
+    for column_name in config.data_column_names:
+      metrics_creator[f"tokens_count_{column_name}"] = functools.partial(calc, column_name=column_name)
   if config.hf_row_counter:
-      metrics_creator['rows_count'] = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_shardings)
+    calc = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
+    for column_name in config.data_column_names:
+      metrics_creator[f"rows_count_{column_name}"] = functools.partial(calc, column_name=column_name)
 
   def get_metrics(batch):
     return {k: v(batch) for k, v in metrics_creator.items()}

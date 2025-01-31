@@ -82,12 +82,16 @@ class HFNormalizeFeatures(grain.MapTransform):
     self.column_name = column_name
 
   def map(self, features):
-    return {
-        "inputs": np.asarray(features[self.column_name], dtype=np.int32),
-        "targets": np.asarray(features[self.column_name], dtype=np.int32),
-        "s_token_count": np.uint64(features["s_token_count"]),
-        "s_rows_count": np.uint64(features["s_rows_count"]),
+    d = {
+      "inputs": np.asarray(features[self.column_name], dtype=np.int32),
+      "targets": np.asarray(features[self.column_name], dtype=np.int32),
     }
+
+    for k, v in features.items():
+      if k.startswith("s_"):
+        d[k] = np.uint64(v)
+
+    return d
 
 
 class HFDataSource(grain.RandomAccessDataSource):
