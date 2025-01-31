@@ -314,13 +314,11 @@ def setup_batch_metrics_creator(config, mesh, is_eval=False):
   metrics_creator = {}
 
   if config.hf_token_counter:
-    calc = jax.jit(calc_token_count, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
     for column_name in config.train_data_columns if not is_eval else config.eval_data_columns:
-      metrics_creator[f"tokens_count_{column_name}"] = functools.partial(calc, column_name=column_name)
+      metrics_creator[f"tokens_count_{column_name}"] = jax.jit(lambda x: calc_token_count(x, column_name), in_shardings=in_shardings, out_shardings=out_shardings)
   if config.hf_row_counter:
-    calc = jax.jit(calc_rows, in_shardings=in_shardings, out_shardings=out_shardings, static_argnums=(1,))
     for column_name in config.train_data_columns if not is_eval else config.eval_data_columns:
-      metrics_creator[f"rows_count_{column_name}"] = functools.partial(calc, column_name=column_name)
+      metrics_creator[f"rows_count_{column_name}"] = jax.jit(lambda x: calc_rows(x, column_name), in_shardings=in_shardings, out_shardings=out_shardings)
 
   def get_metrics(batch):
     return {k: v(batch) for k, v in metrics_creator.items()}
