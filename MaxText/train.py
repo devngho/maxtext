@@ -909,7 +909,8 @@ def train_loop(config, state=None):
       data_load_start = datetime.datetime.now()
       example_batch = load_next_batch(data_iterator, example_batch, config)
       data_load_end = datetime.datetime.now()
-      batch_metrics = batch_metrics_creator(example_batch) + [("data_loading_time", (data_load_end - data_load_start).total_seconds())]
+      batch_metrics = batch_metrics_creator(example_batch)
+      batch_metrics.update({"data_loading_time": (data_load_end - data_load_start).total_seconds()})
       record_goodput(recorder, config, recorder.record_data_loading_end_time if recorder else None)
       check_example_batch(config, example_batch=example_batch)
       # pylint: disable=not-callable
