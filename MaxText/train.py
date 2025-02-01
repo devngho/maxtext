@@ -254,6 +254,16 @@ def save_checkpoint(
             iter=grain.PyGrainCheckpointSave(data_iterator.local_iterator),
         ),
     )
+  elif dataset_type == "hf" and config.hf_checkpoint_dataset_iterator:
+    return checkpoint_manager.save(
+        step,
+        args=orbax.checkpoint.args.Composite(
+            items=orbax.checkpoint.args.PyTreeSave(
+                item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
+            ),
+            iter_state=orbax.checkpoint.args.StandardSave(data_iterator.local_iterator.get_state()),
+        ),
+    )
   else:
     return checkpoint_manager.save(
         step,
@@ -830,13 +840,6 @@ def train_loop(config, state=None):
     ) = maxtext_utils.get_functional_eval_with_signature(eval_step, mesh, state_mesh_shardings, model, config)
 
   batch_metrics_creator = maxtext_utils.setup_batch_metrics_creator(config, mesh, is_eval=False) # this is not used in the eval loop
-
-  # move data iterator to the checkpointed step
-  if config.move_data_iterator_to_checkpointed_step:
-    latest_step = checkpoint_manager.latest_step()
-    if latest_step is not None and latest_step > 0:
-        for _ in trange(latest_step, desc="Moving data iterator to checkpointed step {}".format(latest_step)):
-          load_next_batch(data_iterator, None, config)
 
   num_model_parameters = max_utils.calculate_num_params_from_pytree(state.params)
   max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")

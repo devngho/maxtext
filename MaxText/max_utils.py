@@ -767,6 +767,8 @@ def setup_initial_state(
       else:
         if "iter" in restored and restored["iter"] is not None:
           data_iterator.local_iterator = restored["iter"]
+        if "iter_state" in restored and restored["iter_state"] is not None:
+          data_iterator.local_iterator.set_state(restored["iter_state"])
         state = restored["items"]
     else:
       init_state_partial = functools.partial(init_initial_state, model, tx, config, is_training)

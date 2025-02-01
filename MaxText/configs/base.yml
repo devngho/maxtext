@@ -342,12 +342,11 @@ hf_eval_worker_count: 1
 hf_packing: True
 hf_token_counter: True
 hf_row_counter: True
+hf_checkpoint_dataset_iterator: True
 # for Grain input pipeline (dataset_type=grain)
 grain_train_files: ''
 grain_eval_files: ''
 grain_worker_count: 1
-
-move_data_iterator_to_checkpointed_step: True
 
 epoch: 1 # for hf now
 
