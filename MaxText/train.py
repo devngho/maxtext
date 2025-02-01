@@ -261,7 +261,7 @@ def save_checkpoint(
             items=orbax.checkpoint.args.PyTreeSave(
                 item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
             ),
-            iter_state=orbax.checkpoint.args.StandardSave(item=data_iterator.local_iterator.get_state()),
+            iter_state=orbax.checkpoint.args.JsonSave(item={'state': data_iterator.local_iterator.get_state().decode('utf-8')}),
         ),
     )
   else:

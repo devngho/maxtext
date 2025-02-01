@@ -274,7 +274,7 @@ def load_state_if_possible(
                         item=abstract_unboxed_pre_state,
                         restore_args=restore_args,
                     ),
-                    iter_state=ocp.args.StandardRestore(data_iterator.local_iterator.get_state()),
+                    iter_state=ocp.args.JsonRestore(),
                 )
             ),
             None,
