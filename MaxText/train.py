@@ -15,6 +15,8 @@ limitations under the License.
 """
 import math
 
+from tqdm import trange
+
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports
 """Training loop and Decoding of the model."""
 
@@ -829,6 +831,13 @@ def train_loop(config, state=None):
 
   batch_metrics_creator = maxtext_utils.setup_batch_metrics_creator(config, mesh, is_eval=False) # this is not used in the eval loop
 
+  # move data iterator to the checkpointed step
+  if config.move_data_iterator_to_checkpointed_step:
+    latest_step = checkpoint_manager.latest_step()
+    if latest_step is not None and latest_step > 0:
+        for _ in trange(latest_step, desc="Moving data iterator to checkpointed step {}".format(latest_step)):
+          load_next_batch(data_iterator, None, config)
+
   num_model_parameters = max_utils.calculate_num_params_from_pytree(state.params)
   max_logging.log(f"number parameters: {num_model_parameters/1e9:.3f} billion")
   per_device_tflops, _, _ = maxtext_utils.calculate_tflops_training_per_device(config)
@@ -897,8 +906,10 @@ def train_loop(config, state=None):
 
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
       record_goodput(recorder, config, recorder.record_data_loading_start_time if recorder else None)
+      data_load_start = datetime.datetime.now()
       example_batch = load_next_batch(data_iterator, example_batch, config)
-      batch_metrics = batch_metrics_creator(example_batch)
+      data_load_end = datetime.datetime.now()
+      batch_metrics = batch_metrics_creator(example_batch) + [("data_loading_time", (data_load_end - data_load_start).total_seconds())]
       record_goodput(recorder, config, recorder.record_data_loading_end_time if recorder else None)
       check_example_batch(config, example_batch=example_batch)
       # pylint: disable=not-callable

@@ -347,6 +347,8 @@ grain_train_files: ''
 grain_eval_files: ''
 grain_worker_count: 1
 
+move_data_iterator_to_checkpointed_step: True
+
 epoch: 1 # for hf now
 
 # Training loop
