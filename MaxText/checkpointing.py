@@ -261,6 +261,24 @@ def load_state_if_possible(
             ),
             None,
         )
+      elif (
+          dataset_type == "hf"
+          and data_iterator is not None
+          and (checkpoint_manager.directory / str(step) / "iter_state").exists()
+      ):
+        return (
+            checkpoint_manager.restore(
+                step,
+                args=ocp.args.Composite(
+                    items=ocp.args.PyTreeRestore(
+                        item=abstract_unboxed_pre_state,
+                        restore_args=restore_args,
+                    ),
+                    iter_state=ocp.args.StandardRestore(data_iterator.local_iterator.get_state()),
+                )
+            ),
+            None,
+        )
       else:
         return (
             checkpoint_manager.restore(
