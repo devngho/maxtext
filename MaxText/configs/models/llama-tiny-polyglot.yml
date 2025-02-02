@@ -23,7 +23,7 @@ base_num_decoder_layers: 24
 head_dim: 64
 max_target_length: 2048
 mlp_activations: ["silu","linear"]
-vocab_size: 30000
+vocab_size: 30080
 enable_dropout: False
 logits_via_embedding: False
 normalization_layer_epsilon: 1.e-05
