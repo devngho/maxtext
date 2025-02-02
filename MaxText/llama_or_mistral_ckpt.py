@@ -166,6 +166,15 @@ MODEL_PARAMS_DICT = {
         "base_emb_dim": 1024,
         "base_mlp_dim": 4096,
     },
+    "llama-ablation": {
+        "num_layers": 24,
+        "num_heads": 16,
+        "num_kv_heads": 16,
+        "dims_per_head": 64,
+        "vocab": 14592,
+        "base_emb_dim": 1024,
+        "base_mlp_dim": 4096,
+    }
 }
 
 SIMULATED_CPU_DEVICES_COUNT = 16
