@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import sys
 
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports
 """Training loop and Decoding of the model."""
@@ -24,6 +25,7 @@ import os
 from typing import Sequence
 
 import jax
+import jax.numpy as jnp
 import tensorflow as tf
 from absl import app
 from jax import random
@@ -182,7 +184,8 @@ def main(argv: Sequence[str]) -> None:
   ) = setup_train_loop(config)
 
   example_batch = next(data_iterator)
-  print("Example batch:", example_batch)
+  with jnp.printoptions(threshold=sys.maxsize):
+    print("Example batch:", example_batch)
 
 
 if __name__ == "__main__":
