@@ -188,6 +188,9 @@ class HFRandomAccessDataSource(grain.RandomAccessDataSource):
   def __getitem__(self, index):
     return self.dataset[index]
 
+  def __repr__(self):
+    return f"HFRandomAccessDataSource({repr(self.dataset)})"
+
 
 ########## Functions used by Grain pipeline
 
