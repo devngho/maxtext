@@ -63,7 +63,10 @@ def create_orbax_checkpoint_manager(
   if dataset_type == "grain":
     item_names = ("items", "iter")
   elif dataset_type == "hf" and pyconfig.config.hf_checkpoint_dataset_iterator:
-    item_names = ("items", "iter_state")
+    item_names = ["items"]
+    for i in range(jax.process_count()):
+        item_names.append(f"iter_state{i}")
+    item_names = tuple(item_names)
   else:
     item_names = ("items",)
 
@@ -72,8 +75,9 @@ def create_orbax_checkpoint_manager(
   # we need to use ocdbt and zarr3 to control max file size in the checkpoint
   # omitting `iter` uses default handler for `iter`
   item_handlers = {"items": PyTreeCheckpointHandler(use_ocdbt=use_ocdbt, use_zarr3=use_zarr3)}
-  if 'iter_state' in item_names:
-    item_handlers['iter_state'] = JsonCheckpointHandler()
+  if 'iter_state0' in item_names:
+    for i in range(jax.process_count()):
+        item_handlers[f"iter_state{i}"] = JsonCheckpointHandler()
 
   mngr = CheckpointManager(
       p,
