@@ -167,7 +167,7 @@ MODEL_PARAMS_DICT = {
         "base_mlp_dim": 4096,
     },
     "llama-ablation": {
-        "num_layers": 24,
+        "num_layers": 12,
         "num_heads": 16,
         "num_kv_heads": 16,
         "dims_per_head": 64,
