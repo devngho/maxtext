@@ -255,13 +255,17 @@ def save_checkpoint(
         ),
     )
   elif dataset_type == "hf" and config.hf_checkpoint_dataset_iterator:
+    iter_states = {
+        f"iter_state{jax.process_index()}": orbax.checkpoint.args.JsonSave(item={'state': data_iterator.local_iterator.get_state().decode('utf-8')})
+    }
+
     return checkpoint_manager.save(
         step,
         args=orbax.checkpoint.args.Composite(
             items=orbax.checkpoint.args.PyTreeSave(
                 item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
             ),
-            iter_state=orbax.checkpoint.args.JsonSave(item={'state': data_iterator.local_iterator.get_state().decode('utf-8')}),
+            **iter_states,
         ),
     )
   else:

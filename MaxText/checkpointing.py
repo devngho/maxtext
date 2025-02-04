@@ -271,8 +271,12 @@ def load_state_if_possible(
       elif (
           dataset_type == "hf"
           and data_iterator is not None
-          and (checkpoint_manager.directory / str(step) / "iter_state").exists()
+          and (checkpoint_manager.directory / str(step) / "iter_state0").exists()
       ):
+        iter_states = {}
+        for i in range(jax.process_count()):
+          iter_states[f"iter_state{i}"] = ocp.args.JsonRestore()
+
         return (
             checkpoint_manager.restore(
                 step,
@@ -281,7 +285,7 @@ def load_state_if_possible(
                         item=abstract_unboxed_pre_state,
                         restore_args=restore_args,
                     ),
-                    iter_state=ocp.args.JsonRestore(),
+                    **iter_states,
                 )
             ),
             None,
