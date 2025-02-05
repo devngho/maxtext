@@ -13,9 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-import math
-
-from tqdm import trange
 
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports
 """Training loop and Decoding of the model."""
@@ -60,7 +57,7 @@ from layers import models
 from gcp_workload_monitor import GCPWorkloadMonitor
 
 import jax.numpy as jnp
-from jax import random
+from jax import random, NamedSharding
 from jax.sharding import Mesh
 from jax.experimental import checkify
 
@@ -244,7 +241,7 @@ def save_checkpoint(
         args=orbax.checkpoint.args.PyTreeSave(item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size),
     )
 
-  if dataset_type == "grain":
+  if dataset_type == "grain" or (dataset_type == "hf" and config.hf_checkpoint_dataset_iterator):
     return checkpoint_manager.save(
         step,
         args=orbax.checkpoint.args.Composite(
@@ -252,20 +249,6 @@ def save_checkpoint(
                 item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
             ),
             iter=grain.PyGrainCheckpointSave(data_iterator.local_iterator),
-        ),
-    )
-  elif dataset_type == "hf" and config.hf_checkpoint_dataset_iterator:
-    iter_states = {
-        f"iter_state{jax.process_index()}": orbax.checkpoint.args.JsonSave(item={'state': data_iterator.local_iterator.get_state().decode('utf-8')})
-    }
-
-    return checkpoint_manager.save(
-        step,
-        args=orbax.checkpoint.args.Composite(
-            items=orbax.checkpoint.args.PyTreeSave(
-                item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
-            ),
-            **iter_states,
         ),
     )
   else:

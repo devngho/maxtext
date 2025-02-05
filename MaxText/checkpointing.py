@@ -255,7 +255,7 @@ def load_state_if_possible(
             None,
         )
       if (
-          dataset_type == "grain"
+          (dataset_type == "grain" or dataset_type == "hf")
           and data_iterator is not None
           and (checkpoint_manager.directory / str(step) / "iter").exists()
       ):
@@ -269,28 +269,6 @@ def load_state_if_possible(
                     ),
                     iter=grain.PyGrainCheckpointRestore(data_iterator.local_iterator),
                 ),
-            ),
-            None,
-        )
-      elif (
-          dataset_type == "hf"
-          and data_iterator is not None
-          and (checkpoint_manager.directory / str(step) / "iter_state0").exists()
-      ):
-        iter_states = {}
-        for i in range(jax.process_count()):
-          iter_states[f"iter_state{i}"] = ocp.args.JsonRestore()
-
-        return (
-            checkpoint_manager.restore(
-                step,
-                args=ocp.args.Composite(
-                    items=ocp.args.PyTreeRestore(
-                        item=abstract_unboxed_pre_state,
-                        restore_args=restore_args,
-                    ),
-                    **iter_states,
-                )
             ),
             None,
         )
