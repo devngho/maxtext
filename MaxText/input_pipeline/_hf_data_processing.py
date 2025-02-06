@@ -142,7 +142,7 @@ def preprocessing_pipeline(
       num_records=len(dataset),
       num_epochs=epoch,
       shard_options=grain.ShardOptions(
-          shard_index=dataloading_host_index, shard_count=dataloading_host_count, drop_remainder=drop_remainder
+          shard_index=dataloading_host_index, shard_count=dataloading_host_count, drop_remainder=False
       ),
       shuffle=shuffle,
       seed=data_shuffle_seed if random_access else None,
