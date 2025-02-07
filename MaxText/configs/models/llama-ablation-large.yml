@@ -30,7 +30,7 @@ normalization_layer_epsilon: 1.e-05
 decoder_block: "llama2"
 #attention: "dot_product"
 
-weight_dtype: "float32"
+weight_dtype: "bfloat16"
 logical_axis_rules: [['norm', 'fsdp']]
 
 opt_type: "adamw"
