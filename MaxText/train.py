@@ -913,9 +913,9 @@ def train_loop(config, state=None):
         state, metrics = p_train_step(state, example_batch, nextrng)
 
     for k, v in batch_metrics.items():
-      metrics["scalar"][f"batch/{k}"] = v
+      metrics["scalar"][f"batch/{k}"] = int(v)
       if k in config.cumulative_metrics:
-        cumulative_metrics["scalar"][f"batch/{k}"] = cumulative_metrics["scalar"].get(f"batch/{k}", 0) + v
+        cumulative_metrics["scalar"][f"batch/{k}"] = cumulative_metrics["scalar"].get(f"batch/{k}", 0) + int(v)
         metrics["scalar"][f"batch/{k}_cumulative"] = cumulative_metrics["scalar"][f"batch/{k}"]
 
     step_time_delta = datetime.datetime.now() - last_step_completion
@@ -1021,7 +1021,6 @@ def train_loop(config, state=None):
 
 def main(argv: Sequence[str]) -> None:
   jax.config.update("jax_default_prng_impl", "unsafe_rbg")
-  jax.config.update("jax_enable_x64", True) # for counting tokens well
   # TF allocates extraneous GPU memory when using TFDS data
   # this leads to CUDA OOMs. WAR for now is to hide GPUs from TF
   tf.config.set_visible_devices([], "GPU")
