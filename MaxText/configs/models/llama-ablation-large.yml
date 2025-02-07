@@ -1,0 +1,41 @@
+# Copyright 2023 Google LLC
+#
+# Licensed under the Apache License Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing software
+# distributed under the License is distributed on an "AS IS" BASIS
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# model config for llama-tiny-jamo
+# 1655540736(~=1.66B) parameters without token embeddings, 1700367360(~=1.70B) parameters with token embeddings
+
+base_emb_dim: 3072
+base_num_query_heads: 24
+base_num_kv_heads: 8
+base_mlp_dim: 8192
+base_num_decoder_layers: 16
+head_dim: 128
+max_target_length: 2048
+mlp_activations: ["silu","linear"]
+vocab_size: 14592
+enable_dropout: False
+logits_via_embedding: False
+normalization_layer_epsilon: 1.e-05
+decoder_block: "llama2"
+#attention: "dot_product"
+
+weight_dtype: "float32"
+logical_axis_rules: [['norm', 'fsdp']]
+
+opt_type: "adamw"
+gradient_clipping_threshold: 1.
+adam_b1: 0.9
+adam_b2: 0.95
+adam_eps: 1.e-5
+adam_weight_decay: 0.01
