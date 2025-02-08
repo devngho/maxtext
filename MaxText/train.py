@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports
 """Training loop and Decoding of the model."""
 
@@ -71,6 +70,7 @@ from layers import quantizations
 from ml_goodput_measurement import goodput
 from ml_goodput_measurement import monitoring
 
+from common_types import init_common_types
 # pylint: disable=too-many-positional-arguments
 
 Transformer = models.Transformer
@@ -1030,6 +1030,7 @@ def main(argv: Sequence[str]) -> None:
   pyconfig.initialize(argv)
   max_utils.print_system_information()
   config = pyconfig.config
+  init_common_types()
   jax.config.update("jax_debug_nans", config.jax_debug_nans)
   validate_train_config(config)
   os.environ["TFDS_DATA_DIR"] = config.dataset_path
