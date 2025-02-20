@@ -93,7 +93,7 @@ def preprocessing_pipeline(
 
         dataset = dataset.with_transform(transform)
   else:
-    dataset = dataset.select_columns([data_column_names])
+    dataset = dataset.select_columns(data_column_names)
 
   if not random_access:
       dataset = _input_pipeline_utils.HFDataSource(
