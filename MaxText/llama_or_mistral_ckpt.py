@@ -294,7 +294,7 @@ def convert_to_jax_weights(base_model_path, model_size):
 
   # decoder norm scale ###########################################
   max_logging.log("Processing decoder norm scale")
-  decoder_norm_scale = chkpt_vars[0]["norm.weight"].type(torch.float16).numpy()
+  decoder_norm_scale = chkpt_vars[0]["norm.weight"].type(torch.float32).numpy()
   jax_weights["decoder"]["decoder_norm"]["scale"] = decoder_norm_scale
 
   logging.debug("Memory usage: %f GB", mem_info.memory_info().rss / (1024**3))
@@ -302,7 +302,7 @@ def convert_to_jax_weights(base_model_path, model_size):
   # logits dense #################################################
   max_logging.log("Processing logits dense")
   logits_dense = np.concatenate(
-      [var["output.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+      [var["output.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
   ).transpose()[:, :vocab_size]
   jax_weights["decoder"]["logits_dense"]["kernel"] = logits_dense
 
@@ -311,10 +311,10 @@ def convert_to_jax_weights(base_model_path, model_size):
   # token embedding ##############################################
   max_logging.log("Processing token embeddings")
   if model_size[:6] == "llama3":
-    token_embedder = np.concatenate([var["tok_embeddings.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0)
+    token_embedder = np.concatenate([var["tok_embeddings.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0)
   else:
     token_embedder = np.concatenate(
-        [var["tok_embeddings.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=1
+        [var["tok_embeddings.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=1
     )[:vocab_size, :]
   jax_weights["token_embedder"]["embedding"] = token_embedder
   base_emb_dim = token_embedder.shape[1]
@@ -330,13 +330,13 @@ def convert_to_jax_weights(base_model_path, model_size):
   }
   for layer_idx in tqdm(range(base_num_decoder_layers), desc="layers", leave=False):
     wq = np.concatenate(
-        [var[f"layers.{layer_idx}.attention.wq.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+        [var[f"layers.{layer_idx}.attention.wq.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
     ).transpose()
     wk = np.concatenate(
-        [var[f"layers.{layer_idx}.attention.wk.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+        [var[f"layers.{layer_idx}.attention.wk.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
     ).transpose()
     wv = np.concatenate(
-        [var[f"layers.{layer_idx}.attention.wv.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+        [var[f"layers.{layer_idx}.attention.wv.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
     ).transpose()
 
     wq = np.reshape(wq, [base_emb_dim, base_num_query_heads, head_dim])
@@ -347,7 +347,7 @@ def convert_to_jax_weights(base_model_path, model_size):
         wk = permute_to_match_maxtext_rope(wk)
 
     w_post = np.concatenate(
-        [var[f"layers.{layer_idx}.attention.wo.weight"].type(torch.float16).numpy() for var in chkpt_vars],
+        [var[f"layers.{layer_idx}.attention.wo.weight"].type(torch.float32).numpy() for var in chkpt_vars],
         axis=1,
     )
 
@@ -355,10 +355,10 @@ def convert_to_jax_weights(base_model_path, model_size):
 
     if self_attention["query"]["kernel"] is None:
       stack_shape = (base_num_decoder_layers,)
-      self_attention["query"]["kernel"] = np.zeros(stack_shape + wq.shape, dtype=np.float16)
-      self_attention["key"]["kernel"] = np.zeros(stack_shape + wk.shape, dtype=np.float16)
-      self_attention["value"]["kernel"] = np.zeros(stack_shape + wv.shape, dtype=np.float16)
-      self_attention["out"]["kernel"] = np.zeros(stack_shape + w_post.shape, dtype=np.float16)
+      self_attention["query"]["kernel"] = np.zeros(stack_shape + wq.shape, dtype=np.float32)
+      self_attention["key"]["kernel"] = np.zeros(stack_shape + wk.shape, dtype=np.float32)
+      self_attention["value"]["kernel"] = np.zeros(stack_shape + wv.shape, dtype=np.float32)
+      self_attention["out"]["kernel"] = np.zeros(stack_shape + w_post.shape, dtype=np.float32)
 
     self_attention["query"]["kernel"][layer_idx, ...] = wq  # pylint: disable=E1137
     self_attention["key"]["kernel"][layer_idx, ...] = wk  # pylint: disable=E1137
@@ -384,15 +384,15 @@ def convert_to_jax_weights(base_model_path, model_size):
 
   # self attention layer norm and swap the layer index
   for layer_idx in tqdm(range(base_num_decoder_layers), desc="layers", leave=False):
-    pre_self_attention_layernorm = chkpt_vars[0][f"layers.{layer_idx}.attention_norm.weight"].type(torch.float16).numpy()
-    post_self_attention_layernorm = chkpt_vars[0][f"layers.{layer_idx}.ffn_norm.weight"].type(torch.float16).numpy()
+    pre_self_attention_layernorm = chkpt_vars[0][f"layers.{layer_idx}.attention_norm.weight"].type(torch.float32).numpy()
+    post_self_attention_layernorm = chkpt_vars[0][f"layers.{layer_idx}.ffn_norm.weight"].type(torch.float32).numpy()
     if layer_weight["pre_self_attention_layer_norm"]["scale"] is None:
       stack_shape = (base_num_decoder_layers,)
       layer_weight["pre_self_attention_layer_norm"]["scale"] = np.zeros(
-          stack_shape + pre_self_attention_layernorm.shape, dtype=np.float16
+          stack_shape + pre_self_attention_layernorm.shape, dtype=np.float32
       )
       layer_weight["post_self_attention_layer_norm"]["scale"] = np.zeros(
-          stack_shape + post_self_attention_layernorm.shape, dtype=np.float16
+          stack_shape + post_self_attention_layernorm.shape, dtype=np.float32
       )
     layer_weight["pre_self_attention_layer_norm"]["scale"][layer_idx, ...] = pre_self_attention_layernorm  # pylint: disable=E1137
     layer_weight["post_self_attention_layer_norm"]["scale"][layer_idx, ...] = post_self_attention_layernorm  # pylint: disable=E1137
@@ -430,57 +430,57 @@ def convert_to_jax_weights(base_model_path, model_size):
   for layer_idx in tqdm(range(base_num_decoder_layers), desc="layers", leave=False):
     if num_experts is None:
       wi_0 = np.concatenate(
-          [var[f"layers.{layer_idx}.feed_forward.w1.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+          [var[f"layers.{layer_idx}.feed_forward.w1.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
       ).transpose()
       wi_1 = np.concatenate(
-          [var[f"layers.{layer_idx}.feed_forward.w3.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+          [var[f"layers.{layer_idx}.feed_forward.w3.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
       ).transpose()
       wo = np.concatenate(
-          [var[f"layers.{layer_idx}.feed_forward.w2.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=1
+          [var[f"layers.{layer_idx}.feed_forward.w2.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=1
       ).transpose()
       if layer_weight["mlp"]["wi_0"]["kernel"] is None:
         stack_shape = (base_num_decoder_layers,)
-        layer_weight["mlp"]["wi_0"]["kernel"] = np.zeros(stack_shape + wi_0.shape, dtype=np.float16)
-        layer_weight["mlp"]["wi_1"]["kernel"] = np.zeros(stack_shape + wi_1.shape, dtype=np.float16)
-        layer_weight["mlp"]["wo"]["kernel"] = np.zeros(stack_shape + wo.shape, dtype=np.float16)
+        layer_weight["mlp"]["wi_0"]["kernel"] = np.zeros(stack_shape + wi_0.shape, dtype=np.float32)
+        layer_weight["mlp"]["wi_1"]["kernel"] = np.zeros(stack_shape + wi_1.shape, dtype=np.float32)
+        layer_weight["mlp"]["wo"]["kernel"] = np.zeros(stack_shape + wo.shape, dtype=np.float32)
       layer_weight["mlp"]["wi_0"]["kernel"][layer_idx, ...] = wi_0
       layer_weight["mlp"]["wi_1"]["kernel"][layer_idx, ...] = wi_1
       layer_weight["mlp"]["wo"]["kernel"][layer_idx, ...] = wo
     else:
       gate = np.concatenate(
-          [var[f"layers.{layer_idx}.feed_forward.gate.weight"].type(torch.float16).numpy() for var in chkpt_vars], axis=0
+          [var[f"layers.{layer_idx}.feed_forward.gate.weight"].type(torch.float32).numpy() for var in chkpt_vars], axis=0
       ).transpose()
       if layer_weight["gate"]["kernel"] is None:
         stack_shape = (base_num_decoder_layers,)
-        layer_weight["gate"]["kernel"] = np.zeros(stack_shape + gate.shape, dtype=np.float16)
+        layer_weight["gate"]["kernel"] = np.zeros(stack_shape + gate.shape, dtype=np.float32)
       layer_weight["gate"]["kernel"][layer_idx, ...] = gate
       for k in tqdm(range(num_experts), desc="experts", leave=False):
         wi_0 = np.concatenate(
             [
-                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w1.weight"].type(torch.float16).numpy()
+                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w1.weight"].type(torch.float32).numpy()
                 for var in chkpt_vars
             ],
             axis=0,
         ).transpose()
         wi_1 = np.concatenate(
             [
-                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w3.weight"].type(torch.float16).numpy()
+                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w3.weight"].type(torch.float32).numpy()
                 for var in chkpt_vars
             ],
             axis=0,
         ).transpose()
         wo = np.concatenate(
             [
-                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w2.weight"].type(torch.float16).numpy()
+                var[f"layers.{layer_idx}.feed_forward.experts.{k}.w2.weight"].type(torch.float32).numpy()
                 for var in chkpt_vars
             ],
             axis=1,
         ).transpose()
         if layer_weight["mlp"]["wi_0"]["kernel"] is None:
           stack_shape = (num_experts, base_num_decoder_layers)
-          layer_weight["mlp"]["wi_0"]["kernel"] = np.zeros(stack_shape + wi_0.shape, dtype=np.float16)
-          layer_weight["mlp"]["wi_1"]["kernel"] = np.zeros(stack_shape + wi_1.shape, dtype=np.float16)
-          layer_weight["mlp"]["wo"]["kernel"] = np.zeros(stack_shape + wo.shape, dtype=np.float16)
+          layer_weight["mlp"]["wi_0"]["kernel"] = np.zeros(stack_shape + wi_0.shape, dtype=np.float32)
+          layer_weight["mlp"]["wi_1"]["kernel"] = np.zeros(stack_shape + wi_1.shape, dtype=np.float32)
+          layer_weight["mlp"]["wo"]["kernel"] = np.zeros(stack_shape + wo.shape, dtype=np.float32)
         ei, li = k, layer_idx
         layer_weight["mlp"]["wi_0"]["kernel"][ei, li, ...] = wi_0
         layer_weight["mlp"]["wi_1"]["kernel"][ei, li, ...] = wi_1
