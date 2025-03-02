@@ -184,6 +184,24 @@ MODEL_PARAMS_DICT = {
         "base_emb_dim": 3072,
         "base_mlp_dim": 8192,
     },
+    "phi-4": {
+        "num_layers": 40,
+        "num_heads": 40,
+        "num_kv_heads": 10,
+        "dims_per_head": 128,
+        "vocab": 100352,
+        "base_emb_dim": 5120,
+        "base_mlp_dim": 17920,
+    },
+    "phi-4-jamo": {
+        "num_layers": 40,
+        "num_heads": 40,
+        "num_kv_heads": 10,
+        "dims_per_head": 128,
+        "vocab": 114432,
+        "base_emb_dim": 5120,
+        "base_mlp_dim": 17920,
+    },
 }
 
 SIMULATED_CPU_DEVICES_COUNT = 16
