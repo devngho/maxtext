@@ -89,6 +89,8 @@ def load_hf_model(model_size):
     model = LlamaForCausalLM.from_pretrained(f"devngho/llama-ablation-random")
   elif model_size == "llama-ablation-large":
     model = LlamaForCausalLM.from_pretrained(f"devngho/llama-ablation-large-random")
+  elif model_size == "phi-4-jamo":
+    model = LlamaForCausalLM.from_pretrained(f"devngho/phi-4-jamo-init")
   else:
     raise NotImplementedError
   return model
