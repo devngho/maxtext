@@ -255,6 +255,10 @@ def convert_state_to_hf(training_state, hf_model, model_size):
       dtype=hf_model.get_parameter("model.norm.weight").dtype,
   )
 
+  # match dtype
+  for k, v in hf_model_params.items():
+      hf_model_params[k] = v.to(hf_model.get_parameter(k).dtype)
+
   return hf_model_params
 
 
@@ -266,7 +270,7 @@ def convert_orbax_hf(hf_model_path, step, config):
   training_state = load_model_state(config, step)
   new_hf_model_params = convert_state_to_hf(training_state, hf_model, config.model_name)
   print(f"Saving HuggingFace model to path = {hf_model_path}")
-  hf_model.save_pretrained(hf_model_path, state_dict=new_hf_model_params)
+  hf_model.save_pretrained(hf_model_path, state_dict=new_hf_model_params, push_to_hub=config.push_to_hub, repo_id=config.repo_id)
 
 
 def main(argv: Sequence[str]):
