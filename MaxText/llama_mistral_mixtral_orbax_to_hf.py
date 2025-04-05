@@ -267,6 +267,8 @@ def convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, config):
   Landing function to convert MaxText model's checkpoint to HuggingFace format
   """
   hf_model = load_hf_model(config.model_name)
+  if config.weight_dtype == "bfloat16":
+    hf_model = hf_model.to(torch.bfloat16)
   training_state = load_model_state(config, step)
   new_hf_model_params = convert_state_to_hf(training_state, hf_model, config.model_name)
   print(f"Saving HuggingFace model to path = {hf_model_path}")
