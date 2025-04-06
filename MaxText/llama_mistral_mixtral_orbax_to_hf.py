@@ -82,6 +82,8 @@ def load_hf_model(model_size):
     model = LlamaForCausalLM.from_pretrained(f"devngho/phi-4-jamo-init")
   elif model_size == "llama3.2-1b-jamo":
     model = LlamaForCausalLM.from_pretrained(f"devngho/llama-3.2-1b-jamo-init")
+  elif model_size == "llama3.2-3b-jamo":
+    model = LlamaForCausalLM.from_pretrained(f"devngho/llama-3.2-3b-jamo-init")
   else:
     raise NotImplementedError
   return model
