@@ -21,6 +21,7 @@ from pathlib import Path
 import tensorflow as tf
 import tensorflow_text as tftxt
 import max_logging
+import transformers
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
 
@@ -192,6 +193,8 @@ class SentencePieceTokenizer:
     with tf.io.gfile.GFile(model_path, "rb") as model_fp:
       sp_model = model_fp.read()
     self.sp_tokenizer = tftxt.SentencepieceTokenizer(model=sp_model, add_bos=add_bos, add_eos=add_eos, reverse=False)
+    self.pad_id = self.sp_tokenizer.string_to_id("<pad>")
+    self.unk_id = self.sp_tokenizer.string_to_id("<unk>")
 
   def encode(self, s: str) -> List[int]:
     return self.sp_tokenizer.tokenize(s)
@@ -200,13 +203,43 @@ class SentencePieceTokenizer:
     return self.sp_tokenizer.detokenize(t)
 
 
-def build_tokenizer(tokenizer_path, add_bos, add_eos):
+class HFTokenizer:
+  """
+  Tokenizing using huggingface tokenizer
+  """
+
+  def __init__(self, model_path: str, add_bos: bool, add_eos: bool, hf_access_token: str):
+    max_logging.log(f"Loading HF tokenizer: {model_path}")
+    self.tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_path,
+        add_bos_token=add_bos,
+        add_eos_token=add_eos,
+        token=hf_access_token,
+    )
+    self.pad_id = self.tokenizer.pad_token_id
+    self.unk_id = self.tokenizer.unk_token_id
+    self.bos_id = self.tokenizer.bos_token_id
+    self.eos_id = self.tokenizer.eos_token_id
+
+  def encode(self, s: str) -> List[int]:
+    return self.tokenizer.encode(s)
+
+  def decode(self, t: Sequence[int]) -> str:
+    return self.tokenizer.decode(t)
+
+
+def build_tokenizer(tokenizer_path, tokenizer_type, add_bos, add_eos, hf_access_token):
   """Loads the tokenizer at `tokenizer_path`"""
   max_logging.log(f"Tokenizer path: {tokenizer_path}")
-  if "tiktoken" in tokenizer_path:
+  if tokenizer_type == "tiktoken":
+    assert "tiktoken" in tokenizer_path, f"Invalid tokenizer type: {tokenizer_type} chosen for {tokenizer_path}"
     return TikTokenTokenizer(tokenizer_path, add_bos, add_eos)
-  else:
+  elif tokenizer_type == "huggingface":
+    return HFTokenizer(tokenizer_path, add_bos, add_eos, hf_access_token)
+  elif tokenizer_type == "sentencepiece":
     return SentencePieceTokenizer(tokenizer_path, add_bos, add_eos)
+  else:
+    raise ValueError(f"Invalid tokenizer_type:{tokenizer_type} chosen in config")
 
 
 def TokenizeOp(tokenizer, features: Features, data_keys: Iterable[str] = ("inputs", "targets")) -> Features:
@@ -220,7 +253,7 @@ def TokenizeOp(tokenizer, features: Features, data_keys: Iterable[str] = ("input
     return [modified_string]
 
   for k in data_keys:
-    if isinstance(tokenizer, TikTokenTokenizer):
+    if isinstance(tokenizer, (TikTokenTokenizer, HFTokenizer)):
       features[k] = tf.py_function(_process_string, [features[k]], Tout=[tf.int32])[0]
     elif isinstance(tokenizer, SentencePieceTokenizer):
       features[k] = tokenizer.encode(features[k])

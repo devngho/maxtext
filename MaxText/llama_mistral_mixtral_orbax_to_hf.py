@@ -22,9 +22,9 @@ To save a ckpt
 python3 MaxText/llama_or_mistral_ckpt.py --base-model-path <path/to/meta/ckpt> \
     --maxtext-model-path <GCS/path/to/save/new/maxtext/ckpt> --model-size llama2-7b
 
-python3 MaxText/llama_mistral_mixtral_orbax_to_hf.py MaxText/configs/base.yml 
+python3 MaxText/llama_mistral_mixtral_orbax_to_hf.py MaxText/configs/base.yml
             base_output_directory=path/to/saving/intermediate_MaxText_files
-            load_parameters_path=/path/to/MaxText/checkpoint run_name=<your run name> model_name=<llama2 or mistral> 
+            load_parameters_path=/path/to/MaxText/checkpoint run_name=<your run name> model_name=<llama2 or mistral>
             hardware=gpu
             hf_model_path=/local/path/to/save/HF/model/to
 
@@ -39,24 +39,13 @@ from absl import app
 import numpy as np
 import pyconfig
 import max_utils
-import jax
 from jax.sharding import Mesh
 import max_logging
 import checkpointing
 from generate_param_only_checkpoint import _read_train_checkpoint
 import llama_or_mistral_ckpt
 from transformers import LlamaForCausalLM, MistralForCausalLM, AutoModelForCausalLM, AutoConfig
-
-
-def unpermute_from_match_maxtext_rope(arr, model_size):
-  """
-  Function to get the RoPE values in correct ordering
-  """
-  if model_size[:8] != "llama3.1":
-    return arr
-  evens = arr[..., ::2]
-  odds = arr[..., 1::2]
-  return jax.numpy.concatenate((evens, odds), axis=arr.ndim - 1)
+from max_utils import unpermute_from_match_maxtext_rope
 
 
 def reverse_scale(arr, scale):
@@ -277,14 +266,14 @@ def convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, config):
 
 
 def main(argv: Sequence[str]):
-  pyconfig.initialize(argv[:-4])
+  config = pyconfig.initialize(argv[:-4])
   hf_model_path = argv[-4].split("=")[1]
   step = int(argv[-3].split("=")[1])
   push_to_hub = bool(argv[-2].split("=")[1])
   repo_id = argv[-1].split("=")[1]
   print(f"Will save converted HuggingFace checkpoint to path = {hf_model_path} at step = {step}")
 
-  convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, pyconfig.config)
+  convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, config)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ import functools
 import time
 import queue
 
-from typing import Sequence, Optional
+from typing import Sequence
 from absl import app
 from flax import linen as nn
 from flax.linen import partitioning as nn_partitioning
@@ -43,9 +43,12 @@ import max_logging
 import optimizers
 import profiler
 import pyconfig
-import pathwaysutils  # pylint: disable=unused-import
+import pathwaysutils
 import tensorflow as tf
 import wandb
+
+from metric_logger import MetricLogger
+from utils import gcs_utils
 
 from vertex_tensorboard import VertexTensorboardManager
 # Placeholder: internal
@@ -87,7 +90,7 @@ def validate_train_config(config):
     max_logging.log("WARNING: 'base_output_directory' might be pointing your local file system")
   assert config.steps > 0, "You must set steps or learning_rate_schedule_steps to a positive integer."
 
-  if config.quantization == "fp8":
+  if config.quantization in ("fp8", "nanoo_fp8"):
     # pylint: disable=line-too-long
     assert (
         config.gradient_accumulation_steps == 1
@@ -209,14 +212,17 @@ def save_checkpoint(
     checkpoint_manager,
     step,
     state,
-    dataset_type="c4",
+    dataset_type="tfds",
     data_iterator=None,
-    config: Optional[pyconfig.config] = None,
+    config=None,
+    force=False,
 ) -> bool:
   """Wrapper for saving checkpoint."""
   if config and config.enable_checkpointing:
-    if (step % config.checkpoint_period == 0) or (
-        config.enable_emergency_checkpoint and step % config.local_checkpoint_period == 0
+    if (
+        force
+        or (step % config.checkpoint_period == 0)
+        or (config.enable_emergency_checkpoint and step % config.local_checkpoint_period == 0)
     ):
       blocking_until_ready_start = time.time()
       max_logging.log(f"Waiting for step {step} to finish before checkpoint...")
@@ -234,10 +240,17 @@ def save_checkpoint(
     chunk_byte_size = config.checkpoint_storage_target_data_file_size_bytes
   save_args = jax.tree.map(lambda _: orbax.checkpoint.SaveArgs(chunk_byte_size=chunk_byte_size), state)
 
-  if isinstance(checkpoint_manager, emergency_checkpoint_manager.CheckpointManager):
+  if isinstance(
+      checkpoint_manager,
+      (
+          emergency_checkpoint_manager.CheckpointManager,
+          emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager,
+      ),
+  ):
     return checkpoint_manager.save(
         step,
         args=orbax.checkpoint.args.PyTreeSave(item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size),
+        force=force,
     )
 
   if dataset_type == "grain" or (dataset_type == "hf" and config.hf_checkpoint_dataset_iterator):
@@ -249,6 +262,7 @@ def save_checkpoint(
             ),
             iter=grain.PyGrainCheckpointSave(data_iterator.local_iterator),
         ),
+        force=force,
     )
   else:
     return checkpoint_manager.save(
@@ -258,6 +272,7 @@ def save_checkpoint(
                 item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size
             )
         ),
+        force=force,
     )
 
 
@@ -524,15 +539,13 @@ def train_step(model, config, state_mesh_shardings, state, data, dropout_rng):
         + grad_and_loss["moe_lb_loss"] / config.gradient_accumulation_steps
     )
     raw_grads = jax.tree_util.tree_map(lambda arr: arr / grad_and_loss["total_weights"], grad_and_loss["grad"])
-    aux = jax.tree_map(lambda x: jnp.sum(x, axis=0), aux)
+    aux = jax.tree_map(lambda x: jnp.sum(x, axis=0), aux)  # pytype: disable=module-attr
   else:
     if config.optimizer_memory_host_offload:
       cast_params = jax.device_put(state.params, max_utils.with_memory_kind(state_mesh_shardings.params, "device"))
-      cast_params = max_utils.cast_to_bf16(cast_params)
       state = state.replace(params=cast_params)
       if config.use_dpo:
         reference_params = jax.device_put(reference_params, max_utils.with_memory_kind(reference_params_sharding, "device"))
-        reference_params = max_utils.cast_to_bf16(reference_params)
         extra_dpo_args = [reference_params]
     grad_func = jax.value_and_grad(_loss_fn, argnums=4, has_aux=True)
     (loss, aux), raw_grads = grad_func(model, config, data, dropout_rng, state.params, *extra_dpo_args, is_train=True)
@@ -745,6 +758,7 @@ def setup_train_loop(config):
           data_iterator,
           load_parameters_from_path="",
           load_full_state_from_path="",
+          checkpoint_storage_concurrent_gb=config.checkpoint_storage_concurrent_gb,
           abstract_unboxed_pre_state=abstract_state,
           enable_single_replica_ckpt_restoring=False,
           dataset_type=config.dataset_type,
@@ -865,7 +879,6 @@ def train_loop(config, state=None):
     else:
       p_eval_step = None
 
-  local_metrics_file = open(config.metrics_file, "a", encoding="utf8") if config.metrics_file else None
   running_gcs_metrics = [] if config.gcs_metrics else None
   cumulative_metrics = {"scalar": {}, "scalars": {}}
 
@@ -888,6 +901,7 @@ def train_loop(config, state=None):
       performance_metric_queue = queue.Queue()
       gcp_workload_monitor.start_performance_reporting_thread(performance_metric_queue)
 
+  metric_logger = MetricLogger(writer, config)
   for step in np.arange(start_step, config.steps):
     if step == first_profiling_step or prof.should_activate_periodic_profile(step):
       optional_postfix = f"step_{step}" if config.profile_periodically_period > 0 else ""
@@ -896,7 +910,11 @@ def train_loop(config, state=None):
     with jax.profiler.StepTraceAnnotation("train", step_num=step):
       record_goodput(recorder, config, recorder.record_data_loading_start_time if recorder else None)
       data_load_start = datetime.datetime.now()
-      example_batch = load_next_batch(data_iterator, example_batch, config)
+      try:
+          example_batch = load_next_batch(data_iterator, example_batch, config)
+      except Exception as e:  # pylint: disable=broad-except
+          max_logging.log(f"load_next_batch failed, you may have run out of data. Error message: {e}")
+          break
       # if step == start_step:
       #   with np.printoptions(threshold=sys.maxsize):
       #     print(f"First step data: {jax.experimental.multihost_utils.process_allgather(example_batch)}", flush=True)
@@ -933,11 +951,11 @@ def train_loop(config, state=None):
         checkpoint_manager.wait_until_finished()
         sys.exit()
 
-    write_metrics(writer, local_metrics_file, running_gcs_metrics, metrics, step, config)
+    metric_logger.write_metrics(running_gcs_metrics, metrics, step)
 
-    if config.dump_hlo and step == start_step:
+    if config.dump_hlo and step == (config.dump_step if config.dump_step >= 0 else start_step):
       jax.block_until_ready(state)  # Ensure compilation has finished.
-      max_utils.upload_dump(
+      gcs_utils.upload_dump(
           config.dump_hlo_local_dir,
           config.dump_hlo_gcs_dir,
           module_name=config.dump_hlo_module_name,
@@ -978,9 +996,7 @@ def train_loop(config, state=None):
       )
       if config.use_dpo:
         cumulative_eval_metrics["scalar"]["eval/dpo_reward_accuracy"] = eval_dpo_reward_accuracy / eval_step_count
-      write_metrics(
-          writer, local_metrics_file, running_gcs_metrics, cumulative_eval_metrics, step, config, is_training=False
-      )
+      metric_logger.write_metrics(running_gcs_metrics, cumulative_eval_metrics, step, is_training=False)
       max_logging.log(
           f"average loss after {step=}: {eval_step_count=}, {eval_loss=},"
           f" total_weights={cumulative_eval_metrics['scalar']['eval/total_weights']}"
@@ -997,13 +1013,26 @@ def train_loop(config, state=None):
       max_utils.print_mem_stats("After params initialized")
 
   if checkpoint_manager is not None:
-    # save last checkpoint
-    save_checkpoint(checkpoint_manager, int(config.steps), state, config.dataset_type, data_iterator, config)
+    if int(state.step) - 1 % config.checkpoint_period != 0:
+      try:
+        state_to_save = state if not config.use_dpo else _split_dpo_state(state)[0]
+        if save_checkpoint(
+            checkpoint_manager,
+            int(state_to_save) - 1,
+            state_to_save,
+            config.dataset_type,
+            data_iterator,
+            config,
+            force=True,
+        ):
+          checkpointing.print_save_message(int(state_to_save) - 1, config.async_checkpointing)
+      except Exception:  # pylint: disable=broad-except
+        max_logging.log(f"Checkpoint is already saved for step {int(state.step)-1}.")
+
     checkpoint_manager.wait_until_finished()
-  write_metrics(writer, local_metrics_file, running_gcs_metrics, metrics, config.steps - 1, config)  # final step metrics
+  metric_logger.write_metrics(running_gcs_metrics, metrics, config.steps - 1)  # final step metrics
   max_utils.close_summary_writer(writer)
   record_goodput(recorder, config, recorder.record_job_end_time if recorder else None)
-  clear_buffered_metrics()
   with mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
     # pytype: disable=attribute-error
     compiled = p_train_step.lower(state, example_batch, nextrng).compile()
@@ -1019,6 +1048,7 @@ def train_loop(config, state=None):
 
 
 def main(argv: Sequence[str]) -> None:
+  pathwaysutils.initialize()
   jax.config.update("jax_default_prng_impl", "unsafe_rbg")
   # TF allocates extraneous GPU memory when using TFDS data
   # this leads to CUDA OOMs. WAR for now is to hide GPUs from TF
@@ -1026,9 +1056,8 @@ def main(argv: Sequence[str]) -> None:
   os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
   if "xla_tpu_spmd_rng_bit_generator_unsafe" not in os.environ.get("LIBTPU_INIT_ARGS", ""):
     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS", "") + " --xla_tpu_spmd_rng_bit_generator_unsafe=true"
-  pyconfig.initialize(argv)
+  config = pyconfig.initialize(argv)
   max_utils.print_system_information()
-  config = pyconfig.config
   jax.config.update("jax_debug_nans", config.jax_debug_nans)
   validate_train_config(config)
   os.environ["TFDS_DATA_DIR"] = config.dataset_path
@@ -1052,9 +1081,14 @@ def main(argv: Sequence[str]) -> None:
         monitoring_enabled=True,
         pathway_enabled=config.enable_pathways_goodput,
         include_badput_breakdown=True,
+        include_step_deviation=config.monitor_step_time_deviation,
+        step_deviation_interval_seconds=config.step_deviation_interval_seconds,
     )
     goodput_monitor.start_goodput_uploader()
     max_logging.log("Started Goodput upload to Tensorboard in the background!")
+    if config.monitor_step_time_deviation:
+      goodput_monitor.start_step_deviation_uploader()
+      max_logging.log("Started step time deviation upload to Tensorboard in the background!")
   debug_config = debug_configuration.DebugConfig(
       stack_trace_config=stack_trace_configuration.StackTraceConfig(
           collect_stack_trace=config.collect_stack_trace,

@@ -15,40 +15,39 @@ limitations under the License.
 """
 
 """ Common Max Utils needed by multiple modules"""
-import shutil
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.experimental import mesh_utils
+from inference.page_manager import PageState
 import checkpointing
 import common_types
 import functools
 import time
 import optax
 import os
+import psutil
 import socket
 import subprocess
 from etils import epath
 from collections.abc import Sequence
 import collections
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 import max_logging
 
 
 import orbax.checkpoint as ocp
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
+import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
 
-import json
-import yaml
 import flax
 from flax.training import train_state
 from flax import linen as nn
 from flax.linen import partitioning as nn_partitioning
 
 from tensorboardX import writer
-from google.cloud import storage
 
 HYBRID_RING_64X4 = "hybrid_ring_64x4"
 HYBRID_RING_32X8 = "hybrid_ring_32x8"
@@ -63,10 +62,6 @@ def with_memory_kind(t, memory_kind):
 def cast_dtype_from_to(nest, src, dst):
   """All items in nest with dtype src are casted to dtype dst."""
   return jax.tree_util.tree_map(lambda t: t.astype(dst) if t.dtype == src else t, nest)
-
-
-def cast_to_bf16(params):
-  return cast_dtype_from_to(params, np.float32, jnp.bfloat16)
 
 
 def find_nans_and_infs(pytree):
@@ -123,28 +118,6 @@ def close_summary_writer(summary_writer):
     summary_writer.close()
 
 
-def _prepare_metrics_for_json(metrics, step, run_name):
-  """Converts metric dictionary into json supported types (e.g. float)"""
-  metrics_dict = {}
-  for val in metrics["scalar"]:
-    metrics_dict[val] = float(metrics["scalar"][val])
-  metrics_dict["step"] = float(step)
-  metrics_dict["run_name"] = run_name
-  return metrics_dict
-
-
-def write_metrics_locally(metrics, step, config, file, is_training=True):
-  """Writes metrics locally for testing"""
-  if step == 0:
-    file.truncate(0)
-
-  metrics_dict = _prepare_metrics_for_json(metrics, step, config.run_name)
-  file.write(str(json.dumps(metrics_dict)) + "\n")
-
-  if is_training and step == config.steps - 1:
-    file.close()
-
-
 def add_config_to_summary_writer(config, summary_writer):
   """Writes config params to tensorboard"""
   if jax.process_index() == 0:
@@ -156,94 +129,6 @@ def add_text_to_summary_writer(key, value, summary_writer):
   """Writes given key-value pair to tensorboard as text/summary"""
   if jax.process_index() == 0:
     summary_writer.add_text(key, value)
-
-
-def write_metrics_for_gcs(metrics, step, config, running_metrics, is_training=True):
-  """Writes metrics to gcs"""
-  metrics_dict_step = _prepare_metrics_for_json(metrics, step, config.run_name)
-  running_metrics.append(metrics_dict_step)
-  if is_training and (step + 1) % config.log_period == 0 or step == config.steps - 1:
-    start_step = (step // config.log_period) * config.log_period
-    metrics_filename = f"metrics_step_{start_step:06}_to_step_{step:06}.txt"
-    with open(metrics_filename, "w", encoding="utf8") as metrics_for_gcs:
-      for metrics_step in running_metrics:
-        metrics_for_gcs.write(str(json.dumps(metrics_step)) + "\n")
-
-    metrics_for_gcs.close()
-    gcs_filename = os.path.join(config.metrics_dir, metrics_filename)
-    max_logging.log(f"Moving file {metrics_filename} to GCS...")
-    upload_blob(gcs_filename, metrics_filename)
-    max_logging.log(f"File {metrics_filename} moved successfully!")
-    running_metrics = []  # reset running_metrics to empty list
-  return running_metrics
-
-
-def write_config_raw_keys_for_gcs(raw_keys):
-  """Writes config raw keys to GCS"""
-  if not raw_keys["save_config_to_gcs"] or jax.process_index() != 0:
-    return
-  max_logging.log("Writing config to GCS...")
-
-  raw_keys_dict = dict(raw_keys)
-  filename = "config.yml"
-  with open(filename, "w", encoding="utf8") as config_for_gcs:
-    yaml.dump(raw_keys_dict, config_for_gcs)
-  config_for_gcs.close()
-
-  gcs_filename = os.path.join(raw_keys["base_output_directory"], raw_keys["run_name"], filename)
-  max_logging.log(f"Moving file {filename} to GCS...")
-  upload_blob(gcs_filename, filename)
-  max_logging.log(f"File {filename} moved successfully!")
-
-
-def parse_gcs_bucket_and_prefix(destination_gcs_name):
-  path_parts = destination_gcs_name.replace("gs://", "").split("/")
-  bucket = path_parts.pop(0)
-  key = "/".join(path_parts)
-  return bucket, key
-
-
-def add_trailing_slash(path):
-  if not path.endswith("/"):
-    return path + "/"
-  return path
-
-
-def upload_blob(destination_gcs_name, source_file_name):
-  """Uploads a file to a GCS location"""
-  bucket_name, prefix_name = parse_gcs_bucket_and_prefix(destination_gcs_name)
-  storage_client = storage.Client()
-  bucket = storage_client.get_bucket(bucket_name)
-  blob = bucket.blob(prefix_name)
-  blob.upload_from_filename(source_file_name)
-
-
-def upload_dump(local_dir, target_dir, module_name=None, delete_local_after=True, all_host_upload=False):
-  """Uploads a directory to a GCS location, with an optional filter"""
-  if not all_host_upload and jax.process_index() != 0:
-    return
-  storage_client = storage.Client()
-  bucket_name, prefix_name = parse_gcs_bucket_and_prefix(target_dir)
-  bucket = storage_client.get_bucket(bucket_name)
-  if all_host_upload:
-    hostname = socket.gethostname()  # Alternatively can use jax.process_id()
-    prefix_name = os.path.join(prefix_name, hostname)
-    target_dir = os.path.join(target_dir, hostname)
-  max_logging.log(f"Uploading HLO Dump to {target_dir}...")
-  for root, _, files in os.walk(local_dir):
-    for file in files:
-      if module_name and module_name not in file:
-        continue
-      else:
-        max_logging.log(f"Uploading {file}")
-      local_path = os.path.join(root, file)
-      relative_path = os.path.relpath(local_path, local_dir)
-      blob_name = os.path.join(prefix_name, relative_path)
-      blob = bucket.blob(blob_name)
-      blob.upload_from_filename(local_path)
-  max_logging.log(f"HLO Dump Uploaded to {target_dir}!")
-  if delete_local_after:
-    shutil.rmtree(local_dir)
 
 
 def maybe_initialize_jax_distributed_system(raw_keys):
@@ -318,6 +203,39 @@ def initialize_jax_for_cpu(raw_keys):
   )
 
 
+def _wait_for_file_to_disappear(f, timeout=300):
+  for _ in range(timeout):
+    if not f.exists():
+      return True
+    time.sleep(1)
+  return False
+
+
+def _extract_step(f):
+  # The base file name is formatted as {job_name}-s{step}-n{node_rank}-g{gpu_rank}
+  return f.rsplit("-", 3)[1][1:]
+
+
+def _block_and_proces_restore_dir(directory, timeout=300):
+  """Block until a file ending with `.restore` appears, then extract the step number and rename
+  the directory using the step number.
+  """
+  WORD = ".restore"
+  for _ in range(timeout):
+    files = os.listdir(directory)
+    for f in files:
+      if f.endswith(WORD):
+        step = _extract_step(f)
+        if step != "0":
+          os.rename(epath.Path(directory) / f, epath.Path(directory) / step)
+          max_logging.log(f"Found a restore directory at step {step} and renamed it to {epath.Path(directory) / step}.")
+        else:
+          max_logging.log("Found a restore directory at step 0, skipping renaming.")
+        return
+    time.sleep(1)
+  max_logging.log(f"{timeout} seconds have passed but no .restore file was found.")
+
+
 def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
   """Initialize JAX distributed runtime for TPUs when emergency checkpointing is used.
   The information required to initialize JAX distributed runtime will be written by GKE to
@@ -340,12 +258,17 @@ def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
       REPLICATOR_FILE = "replicator.yaml"
       TEMP_FILE = REPLICATOR_FILE + ".tmp"
       replicator_file = epath.Path(raw_keys["local_checkpoint_directory"]) / REPLICATOR_FILE
+      if not _wait_for_file_to_disappear(replicator_file):
+        max_logging.log("There is existing replicator.yaml which did not disappear in time.")
+      else:
+        max_logging.log("replicator.yaml no longer exists, creating new replicator.yaml.")
+      TEMP_FILE = REPLICATOR_FILE + ".tmp"
       temp_file = epath.Path(raw_keys["local_checkpoint_directory"]) / TEMP_FILE
       num_slices = get_num_slices(raw_keys)
       num_nodes = jax.process_count()
       nodes_per_slice = num_nodes // num_slices
       max_logging.log(f"num_slices: {num_slices}, num_nodes: {num_nodes}, nodes_per_slice: {nodes_per_slice}")
-      node_rank = jax.process_index()
+      node_rank = jax._src.distributed.global_state.process_id  # pylint: disable=protected-access
       peer_ranks = []
       for i in range(num_slices):
         peer = node_rank % nodes_per_slice + i * nodes_per_slice
@@ -366,6 +289,11 @@ def initialize_jax_for_tpu_with_emergency_checkpointing(raw_keys):
 
       temp_file.write_text("\n".join([l.strip() for l in replicator_yaml.split("\n")]))
       os.rename(temp_file, replicator_file)
+      if not _wait_for_file_to_disappear(replicator_file):
+        max_logging.log("The newly created replicator.yaml was not deleted in time.")
+      else:
+        max_logging.log("The newly created replicator.yaml was deleted, moving forward.")
+      _block_and_proces_restore_dir(raw_keys["local_checkpoint_directory"])
   else:
     max_logging.log(
         "Initializing JAX distributed runtime without args when emergency checkpointing is"
@@ -567,6 +495,30 @@ def is_valid_custom_mesh(ici_parallelism, strategy):
     raise ValueError(f"The strategy {strategy} to reshape the mesh is invalid.")
 
 
+def optimize_mesh_for_tpu_v6e(mesh, devices):
+  """Apply transformations to the mesh to optimize for TPU v6e"""
+  if devices[0].device_kind != "TPU v6 lite":
+    return mesh
+  num_devices = len(devices)
+  mesh_is_1d_ring = num_devices in mesh.shape
+  if not mesh_is_1d_ring:
+    return mesh
+  # check that the physical topology is 2x4
+  device_coords = [d.coords for d in devices]
+  coord_size = len(device_coords[0])
+  max_coords = tuple(max(dc[i] for dc in device_coords) for i in range(coord_size))
+  min_coords = tuple(min(dc[i] for dc in device_coords) for i in range(coord_size))
+  dims = tuple(h - l + 1 for (h, l) in zip(max_coords, min_coords))
+  if dims != (2, 4, 1):
+    return mesh
+  axis_idx = mesh.shape.index(num_devices)
+  new_mesh = np.moveaxis(mesh, axis_idx, 0)
+  new_mesh[4:] = new_mesh[-1:3:-1]
+  new_mesh = np.moveaxis(new_mesh, 0, axis_idx)
+  max_logging.log("Optimized the mesh for TPU v6e")
+  return new_mesh
+
+
 def create_device_mesh(config, devices=None):
   """Creates a device mesh with each slice in its own data parallel group. If there is only one slice, uses two replicas"""
   if devices is None:
@@ -616,6 +568,8 @@ def create_device_mesh(config, devices=None):
           ici_parallelism,
           devices,
       )
+      if config.optimize_mesh_for_tpu_v6e:
+        mesh = optimize_mesh_for_tpu_v6e(mesh, devices)
 
   max_logging.log(f"Num_devices: {num_devices}, shape {mesh.shape}")
 
@@ -693,7 +647,9 @@ def setup_decode_state(model, config, rng, mesh, checkpoint_manager):
     max_logging.log(f"Loading decode params from {config.load_parameters_path}")
     unboxed_abstract_state, state_mesh_annotations, _ = get_abstract_state(model, None, config, rng, mesh, False)
     with nn_partitioning.axis_rules(config.logical_axis_rules):
-      params = checkpointing.load_params_from_path(config.load_parameters_path, unboxed_abstract_state.params)
+      params = checkpointing.load_params_from_path(
+          config.load_parameters_path, unboxed_abstract_state.params, config.checkpoint_storage_concurrent_gb
+      )
     state = init_decode_state(None, params)
 
   state = unbox_logicallypartioned(state)
@@ -755,6 +711,7 @@ def setup_initial_state(
         data_iterator,
         config.load_parameters_path,
         config.load_full_state_path,
+        config.checkpoint_storage_concurrent_gb,
         unboxed_abstract_state,
         config.enable_single_replica_ckpt_restoring,
         config.dataset_type,
@@ -762,7 +719,13 @@ def setup_initial_state(
     )
 
     if restored:
-      if isinstance(checkpoint_manager, emergency_checkpoint_manager.CheckpointManager):
+      if isinstance(
+          checkpoint_manager,
+          (
+              emergency_checkpoint_manager.CheckpointManager,
+              emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager,
+          ),
+      ):
         state = restored
       else:
         if "iter" in restored and restored["iter"] is not None:
@@ -955,7 +918,7 @@ def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
   )
 
 
-def get_prefill_kv_cache_annotations(model, config, rng, mesh):
+def get_prefill_kv_cache_annotations(model, config, rng, mesh, page_state: Optional[PageState] = None):
   """Get a shaped abstraction of the state (including optimizer)"""
 
   def init_kv_cache(model, config):
@@ -969,6 +932,8 @@ def get_prefill_kv_cache_annotations(model, config, rng, mesh):
         jnp.ones(input_shape),
         jnp.ones(input_shape),
         model_mode=common_types.MODEL_MODE_PREFILL,
+        slot=0,
+        page_state=page_state,
     )
     return model_vars["cache"]
 
@@ -981,7 +946,7 @@ def get_prefill_kv_cache_annotations(model, config, rng, mesh):
   return state_mesh_annotations
 
 
-def get_kv_cache_annotations(model, config, rng, mesh):
+def get_kv_cache_annotations(model, config, rng, mesh, page_state: Optional[PageState] = None):
   """Get a shaped abstraction of the state (including optimizer)"""
 
   def init_kv_cache(model, config):
@@ -995,6 +960,8 @@ def get_kv_cache_annotations(model, config, rng, mesh):
         jnp.ones(input_shape),
         jnp.ones(input_shape),
         model_mode=common_types.MODEL_MODE_AUTOREGRESSIVE,
+        slot=0,
+        page_state=page_state,
     )
     return model_vars["cache"]
 
@@ -1080,9 +1047,45 @@ def print_mem_stats(label: str):
     max_logging.log(f"\tMemstats unavailable, error: {ex}")
 
 
+def print_cpu_ram_stats(label: str):
+  """Print stats of CPU RAM usage/availability."""
+  max_logging.log(f"\nRAMstats: {label}:")
+  try:
+    ram = psutil.virtual_memory()
+
+    total = round(ram.total / 2**30, 2)
+    available = round(ram.available / 2**30, 2)
+    used = round(ram.used / 2**30, 2)
+
+    max_logging.log(f"\tUsing (GB) {used} / {total} ({used/total:%}) -->  Available:{available}")
+  except (RuntimeError, KeyError, TypeError) as ex:
+    max_logging.log(f"\tRAM stats unavailable, error: {ex}")
+
+
 def print_system_information():
   """Print system information of the current environment.
   Note that this will initialize the JAX backend."""
   max_logging.log(f"System Information: Jax Version: {jax.__version__}")
   max_logging.log(f"System Information: Jaxlib Version: {jax.lib.__version__}")
-  max_logging.log(f"System Information: Jax Backend: {jax.lib.xla_bridge.get_backend().platform_version}")
+  max_logging.log(f"System Information: Jax Backend: {jax.extend.backend.get_backend().platform_version}")
+
+
+def permute_to_match_maxtext_rope(arr):
+  """Permutes the Huggingface Rope to match the MaxText logic."""
+  assert arr.shape[-1] % 2 == 0, "The last dimension for rope has to be even."
+  evens, odds = np.split(arr, 2, axis=arr.ndim - 1)  # pylint: disable=W0632
+  x = np.empty_like(arr)
+  x[..., ::2] = evens
+  x[..., 1::2] = odds
+  return x
+
+
+def unpermute_from_match_maxtext_rope(arr, model_size):
+  """
+  Function to get the RoPE values in correct ordering
+  """
+  if model_size[:8] != "llama3.1":
+    return arr
+  evens = arr[..., ::2]
+  odds = arr[..., 1::2]
+  return jax.numpy.concatenate((evens, odds), axis=arr.ndim - 1)

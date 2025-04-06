@@ -66,6 +66,10 @@ class GemmaDecoderLayer(nn.Module):
       decoder_positions,
       deterministic,
       model_mode,
+      previous_chunk=None,
+      page_manager=None,
+      page_state=None,
+      slot=None,
   ):
     cfg = self.config
     mesh = self.mesh
@@ -91,8 +95,8 @@ class GemmaDecoderLayer(nn.Module):
         weight_dtype=cfg.weight_dtype,
         dropout_rate=cfg.dropout_rate,
         name="self_attention",
-        float32_qk_product=True,
-        float32_logits=True,
+        float32_qk_product=cfg.float32_qk_product,
+        float32_logits=cfg.float32_logits,
         quant=self.quant,
         kv_quant=quantizations.configure_kv_quant(cfg),
         use_ragged_attention=cfg.use_ragged_attention,

@@ -22,11 +22,12 @@ sys.path.append(parent_dir)
 
 import maxtext_trillium_model_configs as model_configs
 import maxtext_xpk_runner as mxr
+from xpk_configs import XpkClusterConfig
 
 
 def main() -> int:
   # V6e cluster config
-  cluster_config = mxr.XpkClusterConfig(
+  cluster_config = XpkClusterConfig(
       cluster_name="v6e-256-cluster",
       project="tpu-project",
       zone="us-east5-b",
@@ -59,11 +60,11 @@ def main() -> int:
   base_output_directory = f"gs://{user}-{region}/{user}"
 
   list_of_models = [
-      model_configs.default_basic_1_pw,
+      model_configs.default_basic_1,
   ]
   pathways_config = mxr.PathwaysConfig(
       server_image=server_image,
-      proxy_image=proxy_image,
+      proxy_server_image=proxy_image,
       runner_image=runner,
       remote_python_sidecar_image=remote_python_image,
   )

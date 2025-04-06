@@ -18,7 +18,6 @@ import os
 from typing import List, Union
 
 """Input pipeline using Huggingface datasets."""
-import functools
 
 import ml_collections
 import jax
@@ -55,6 +54,9 @@ def preprocessing_pipeline(
     random_access=True,
     epoch=1,
     use_dpo=None,
+    use_sft=None,
+    sft_train_on_completion_only=True,
+    grain_worker_count=1,  # only support 0 or 1
 ):
   """pipeline for preprocessing HF dataset"""
 
@@ -62,26 +64,63 @@ def preprocessing_pipeline(
 
   data_column_names_ = tuple(data_column_names)
 
-  if tokenize:
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        tokenizer_path,
-        add_bos_token=add_bos,
-        add_eos_token=add_eos,
-        model_max_length=max_target_length,
-        legacy=False,
-        token=hf_access_token,
+  if shuffle:
+      dataset = dataset.shuffle(seed=data_shuffle_seed)
+
+  if use_sft:
+    dataset = dataset.select_columns(data_column_names)
+
+    supported_columns = [["prompt", "completion"], ["messages"]]
+    assert any(
+        set(data_column_names) == set(supported) for supported in supported_columns
+    ), f"Dataset column names mismatch. Expected columns to match one of {supported_columns}, but got {data_column_names}"
+    assert _input_pipeline_utils.is_conversational(
+        dataset.features, data_column_names
+    ), "Dataset is not in conversational format."
+
+    if len(data_column_names) > 1:
+      combined_column_name = "messages"
+      dataset_features = datasets.Features(
+          {combined_column_name: [{"content": datasets.Value(dtype="string"), "role": datasets.Value(dtype="string")}]}
+      )
+      dataset = dataset.map(
+          _input_pipeline_utils.combine_columns,
+          fn_kwargs={"columns": data_column_names, "data_column": combined_column_name},
+          remove_columns=data_column_names,
+          features=dataset_features,
+      )
+
+    data_column_names = list(dataset.features.keys())
+    dataset = dataset.map(
+        _input_pipeline_utils.extract_messages_and_mask, fn_kwargs={"data_column_name": data_column_names[0]}
     )
+  else:
+    dataset = dataset.select_columns(data_column_names)
+
+  tokenizer = transformers.AutoTokenizer.from_pretrained(
+      tokenizer_path,
+      add_bos_token=add_bos if not use_sft else False,
+      add_eos_token=add_eos if not use_sft else False,
+      legacy=False,
+      token=hf_access_token,
+  )
+  if tokenizer.pad_token_id is not None:
+    pad_id = tokenizer.pad_token_id
+  elif tokenizer.unk_token_id is not None:
+    pad_id = tokenizer.unk_token_id
+  else:
+    pad_id = -1
 
     if not random_access:
         dataset = dataset.map(
             _input_pipeline_utils.tokenization,
             batched=True,
-            fn_kwargs={"hf_tokenizer": tokenizer, "max_length": max_target_length - 1, "column_names": data_column_names},
+            fn_kwargs={"hf_tokenizer": tokenizer, "truncation": True if not use_sft else False, "max_length": max_target_length - 1, "column_names": data_column_names},
         )
         dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
         def transform(x):
-            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_)
+            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_, truncation=True if not use_sft else False)
 
             token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names_}
             rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names_}
@@ -111,13 +150,27 @@ def preprocessing_pipeline(
       )
 
   operations = []
-  if not use_dpo:
+  if use_sft:
+    operations.append(
+        _input_pipeline_utils.SFTPromptMasking(
+            text_column_name=data_column_names[0],
+            completion_only=sft_train_on_completion_only,
+            max_target_length=max_target_length,
+            add_bos=add_bos,
+            add_eos=add_eos,
+            bos_id=tokenizer.bos_token_id,
+            eos_id=tokenizer.eos_token_id,
+            unk_id=pad_id,
+        )
+    )
+    data_column_names = ("inputs", "targets")
+  elif use_dpo:
+    lists2array = lambda x: jax.tree.map(np.asarray, x, is_leaf=lambda x: isinstance(x, (list, tuple)))
+    operations.append(grain.MapOperation(lists2array))
+  else:
     assert len(data_column_names) == 1
     operations.append(_input_pipeline_utils.HFNormalizeFeatures(data_column_names[0]))
     data_column_names = ("inputs", "targets")
-  else:
-    lists2array = lambda x: jax.tree.map(np.asarray, x, is_leaf=lambda x: isinstance(x, (list, tuple)))
-    operations.append(grain.MapOperation(lists2array))
 
   if packing and not use_dpo:
     length_struct = {col: max_target_length for col in (list(data_column_names) + ["s_token_count_"+data_column_names_[0], "s_rows_count_"+data_column_names_[0]])}
@@ -129,11 +182,11 @@ def preprocessing_pipeline(
     )
     operations.append(_input_pipeline_utils.ReformatPacking(list(data_column_names) + ["s_token_count_"+column_names for column_names in data_column_names_] + ["s_rows_count_"+column_names for column_names in data_column_names_]))
   else:
-    operations.append(_input_pipeline_utils.PadToMaxLength(max_target_length))
+    operations.append(_input_pipeline_utils.PadToMaxLength(max_target_length, pad_id))
     operations.append(grain.Batch(batch_size=global_batch_size // jax.process_count(), drop_remainder=drop_remainder))
 
   if shift and not use_dpo:
-    operations.append(_input_pipeline_utils.ShiftData(axis=1))
+    operations.append(_input_pipeline_utils.ShiftData(ignored_ids=[pad_id, tokenizer.bos_token_id], axis=1))
 
   # Since HuggingFace IterableDataset does not support access through index
   # Indexes generated by dummy_index_sampler is not used.
@@ -153,6 +206,7 @@ def preprocessing_pipeline(
       operations=operations,
       sampler=index_sampler,
       worker_count=num_threads if random_access else 1,  # only supports one worker for now, more workers results in duplicated data
+      worker_buffer_size=1,
       read_options=grain.ReadOptions(num_threads=1 if random_access else num_threads, prefetch_buffer_size=128),
   )
 
@@ -200,6 +254,8 @@ def make_hf_train_iterator(
       packing=config.hf_packing,
       drop_remainder=config.drop_last_batch,
       epoch=config.epoch,
+      use_sft=config.use_sft,
+      sft_train_on_completion_only=config.sft_train_on_completion_only,
   )
   return train_iter
 
@@ -245,5 +301,7 @@ def make_hf_eval_iterator(
       num_threads=config.hf_eval_worker_count,
       packing=config.hf_packing,
       drop_remainder=config.drop_last_batch,
+      use_sft=config.use_sft,
+      sft_train_on_completion_only=config.sft_train_on_completion_only,
   )
   return eval_iter

@@ -278,6 +278,9 @@ class Gpt3DecoderLayer(nn.Module):
       decoder_positions,
       deterministic,
       model_mode,
+      previous_chunk=None,
+      page_state=None,
+      slot=None,
   ):
     cfg = self.config
     mesh = self.mesh
@@ -312,6 +315,8 @@ class Gpt3DecoderLayer(nn.Module):
         mesh=mesh,
         dropout_rate=cfg.dropout_rate,
         name="self_attention",
+        float32_qk_product=cfg.float32_qk_product,
+        float32_logits=cfg.float32_logits,
         fused_qkv=cfg.fused_qkv,
         use_bias=True,
         quant=self.quant,
