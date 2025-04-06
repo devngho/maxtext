@@ -245,9 +245,10 @@ def convert_state_to_hf(training_state, hf_model, model_size):
     )
 
   # LM head and layernorm
-  hf_model_params["lm_head.weight"] = torch.tensor(
-      np.asarray(training_state.params["params"]["decoder"]["logits_dense"]["kernel"].T.astype('float32')), dtype=hf_model.get_parameter("lm_head.weight").dtype
-  )
+  if not hf_model.config.tie_word_embeddings:
+    hf_model_params["lm_head.weight"] = torch.tensor(
+        np.asarray(training_state.params["params"]["decoder"]["logits_dense"]["kernel"].T.astype('float32')), dtype=hf_model.get_parameter("lm_head.weight").dtype
+    )
   hf_model_params["model.norm.weight"] = torch.tensor(
       np.asarray(
           training_state.params["params"]["decoder"]["decoder_norm"]["scale"].reshape(base_num_query_heads * head_dim).astype('float32')
