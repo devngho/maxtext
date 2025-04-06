@@ -29,7 +29,7 @@ from multihost_dataloading import MultiHostDataLoadIterator
 import numpy as np
 import orbax.checkpoint as ocp
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
-import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
+# import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
 # pylint: disable=too-many-positional-arguments
 
@@ -128,20 +128,21 @@ def create_orbax_emergency_replicator_checkpoint_manager(
     global_mesh: jax.sharding.Mesh,
 ):
   """Returns an emergency replicator checkpoint manager."""
-  flags.FLAGS.experimental_orbax_use_distributed_process_id = True
-  max_logging.log("Creating emergency replicator checkpoint manager...")
+  return None
+  # flags.FLAGS.experimental_orbax_use_distributed_process_id = True
+  # max_logging.log("Creating emergency replicator checkpoint manager...")
 
-  options = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManagerOptions(
-      save_interval_steps=save_interval_steps,
-  )
-  manager = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager(
-      epath.Path(local_checkpoint_dir),
-      options,
-      global_mesh=global_mesh,
-  )
+  # options = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManagerOptions(
+  #     save_interval_steps=save_interval_steps,
+  # )
+  # manager = emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager(
+  #     epath.Path(local_checkpoint_dir),
+  #     options,
+  #     global_mesh=global_mesh,
+  # )
 
-  max_logging.log("Emergency replicator checkpoint manager created!")
-  return manager
+  # max_logging.log("Emergency replicator checkpoint manager created!")
+  # return manager
 
 
 def print_save_message(step, async_checkpointing):
@@ -250,7 +251,7 @@ def load_state_if_possible(
           checkpoint_manager,
           (
               emergency_checkpoint_manager.CheckpointManager,
-              emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager,
+              # emergency_replicator_checkpoint_manager.ReplicatorCheckpointManager,
           ),
       ):
         return (
