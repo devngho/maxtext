@@ -114,6 +114,13 @@ MODEL_PARAMS_DICT = {
         "dims_per_head": 128,
         "vocab": 128256,
     },
+    "llama3.2-1b-jamo": {
+        "num_layers": 16,
+        "num_heads": 32,
+        "num_kv_heads": 8,
+        "dims_per_head": 64,
+        "vocab": 142336,
+    },
     "llama3.3-70b": {
         "num_layers": 80,
         "num_heads": 64,

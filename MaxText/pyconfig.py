@@ -223,6 +223,7 @@ def validate_model_name(s: str) -> bool:
       "llama3.1-8b",
       "llama3.1-70b",
       "llama3.1-405b",
+      "llama3.2-1b-jamo",
       "llama3.3-70b",
       "mistral-7b",
       'mistral-nemo',
