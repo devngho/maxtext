@@ -24,6 +24,7 @@ import numpy as np
 
 import max_logging
 from utils import gcs_utils
+import wandb
 
 
 def _prepare_metrics_for_json(metrics, step, run_name):
@@ -68,6 +69,9 @@ class MetricLogger:
       steps_to_write = step
 
     if metrics_to_write:
+      if self.config.use_wandb:
+        self.write_metrics_to_wandb(metrics_to_write, steps_to_write)
+
       if self.config.enable_tensorboard:
         self.write_metrics_to_tensorboard(metrics_to_write, steps_to_write, is_training)
 
@@ -129,3 +133,16 @@ class MetricLogger:
         if full_log and jax.process_index() == 0:
           max_logging.log(f"To see full metrics 'tensorboard --logdir={self.config.tensorboard_dir}'")
           self.writer.flush()
+
+  def write_metrics_to_wandb(self, metrics, step):
+    """Writes metrics to wandb"""
+    with jax.spmd_mode("allow_all"):
+      if jax.process_index() == 0:
+        log = {}
+
+        for metric_name in metrics.get("scalar", []):
+          log[metric_name] = metrics["scalar"][metric_name]
+        for metric_name in metrics.get("scalars", []):
+          log[metric_name] = metrics["scalars"][metric_name]
+
+        wandb.log(log, step=step)
