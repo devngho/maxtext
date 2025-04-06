@@ -94,60 +94,60 @@ def preprocessing_pipeline(
     dataset = dataset.map(
         _input_pipeline_utils.extract_messages_and_mask, fn_kwargs={"data_column_name": data_column_names[0]}
     )
-  elif tokenize:
+  else:
     dataset = dataset.select_columns(data_column_names)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        tokenizer_path,
-        add_bos_token=add_bos if not use_sft else False,
-        add_eos_token=add_eos if not use_sft else False,
-        legacy=False,
-        token=hf_access_token,
-    )
-    if tokenizer.pad_token_id is not None:
-      pad_id = tokenizer.pad_token_id
-    elif tokenizer.unk_token_id is not None:
-      pad_id = tokenizer.unk_token_id
-    else:
-      pad_id = -1
+  tokenizer = transformers.AutoTokenizer.from_pretrained(
+      tokenizer_path,
+      add_bos_token=add_bos if not use_sft else False,
+      add_eos_token=add_eos if not use_sft else False,
+      legacy=False,
+      token=hf_access_token,
+  )
+  if tokenizer.pad_token_id is not None:
+    pad_id = tokenizer.pad_token_id
+  elif tokenizer.unk_token_id is not None:
+    pad_id = tokenizer.unk_token_id
+  else:
+    pad_id = -1
 
     if not random_access:
-      dataset = dataset.map(
-          _input_pipeline_utils.tokenization,
-          batched=True,
-          fn_kwargs={"hf_tokenizer": tokenizer, "truncation": True if not use_sft else False, "max_length": max_target_length - 1, "column_names": data_column_names},
-      )
-      dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
+        dataset = dataset.map(
+            _input_pipeline_utils.tokenization,
+            batched=True,
+            fn_kwargs={"hf_tokenizer": tokenizer, "truncation": True if not use_sft else False, "max_length": max_target_length - 1, "column_names": data_column_names},
+        )
+        dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
-      def transform(x):
-          ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_, truncation=True if not use_sft else False)
+        def transform(x):
+            ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_, truncation=True if not use_sft else False)
 
-          token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names_}
-          rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names_}
+            token_counts = {'s_token_count_' + column_name:  [[len(ids[column_name][i])] for i in range(len(ids[column_name]))] for column_name in data_column_names_}
+            rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(ids[column_name]))] for column_name in data_column_names_}
 
-          ids.update(token_counts)
-          ids.update(rows_counts)
+            ids.update(token_counts)
+            ids.update(rows_counts)
 
-          return ids
+            return ids
 
-      dataset = dataset.with_transform(transform)
+        dataset = dataset.with_transform(transform)
   else:
     dataset = dataset.select_columns(data_column_names + ["s_token_count_"+data_column_names[0], "s_rows_count_"+data_column_names[0]])
 
   if not random_access:
-    dataset = _input_pipeline_utils.HFDataSource(
-        dataset,
-        dataloading_host_index,
-        dataloading_host_count,
-        num_threads,
-        generate_padding_example,
-        max_target_length,
-        data_column_names,
-    )
+      dataset = _input_pipeline_utils.HFDataSource(
+          dataset,
+          dataloading_host_index,
+          dataloading_host_count,
+          num_threads,
+          generate_padding_example,
+          max_target_length,
+          data_column_names,
+      )
   else:
-    dataset = _input_pipeline_utils.HFRandomAccessDataSource(
-        dataset
-    )
+      dataset = _input_pipeline_utils.HFRandomAccessDataSource(
+          dataset
+      )
 
   operations = []
   if use_sft:
