@@ -66,7 +66,7 @@ def create_orbax_checkpoint_manager(
   max_logging.log("Creating checkpoint manager...")
   p = epath.Path(checkpoint_dir)
 
-  if dataset_type == "grain" or (dataset_type == "hf" and pyconfig.config.hf_checkpoint_dataset_iterator):
+  if dataset_type == "grain" or dataset_type == "hf":
     item_names = ("items", "iter")
   else:
     item_names = ("items",)
