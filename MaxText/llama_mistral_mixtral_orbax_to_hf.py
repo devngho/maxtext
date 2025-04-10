@@ -33,6 +33,7 @@ the GCS bucket as a local path using `setup_gcsfuse.sh`, but remember to mount a
 """
 
 from typing import Sequence
+import jax
 import torch
 from tqdm import tqdm
 from absl import app
