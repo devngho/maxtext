@@ -24,11 +24,11 @@ from typing import Any, Union
 
 import jax
 from jax.experimental.compilation_cache import compilation_cache
-from layers.attentions import AttentionType
-from utils import gcs_utils
-import accelerator_to_spec_map
-import max_logging
-import max_utils
+from MaxText.layers.attentions import AttentionType
+from MaxText.utils import gcs_utils
+from MaxText import accelerator_to_spec_map
+from MaxText import max_logging
+from MaxText import max_utils
 import omegaconf
 
 OmegaConf = omegaconf.OmegaConf
@@ -82,6 +82,29 @@ def validate_attention_type(s: str) -> None:
     raise ValueError("Invalid attention type was passed. Valid options ", valid_attention_types)
 
 
+def validate_attention_window_params(
+    attention_type: str,
+    chunk_attn_window_size: int,
+    sliding_window_size: int,
+) -> None:
+  """
+  Validates window size parameters for attention types 'chunk' and 'local'.
+  """
+  if attention_type == AttentionType.CHUNK.value:
+    # Validate chunk_attn_window_size for 'chunk' attention
+    if not isinstance(chunk_attn_window_size, int) or chunk_attn_window_size <= 0:
+      raise ValueError(
+          f"When attention_type is 'chunk', chunk_attn_window_size must be an integer greater than 0. "
+          f"Got: {chunk_attn_window_size}"
+      )
+  elif attention_type == AttentionType.LOCAL_SLIDING.value:
+    if not isinstance(sliding_window_size, int) or sliding_window_size <= 0:
+      raise ValueError(
+          f"When attention_type is 'local', sliding_window_size must be an integer greater than 0. "
+          f"Got: {sliding_window_size}"
+      )
+
+
 def validate_profiler_type(s: str) -> None:
   valid_profiler_types = ("", "nsys", "xplane")
   if s not in valid_profiler_types:  # currently supported attention
@@ -125,6 +148,9 @@ def validate_rope_type(rope_type: str) -> None:
 def validate_keys(keys):
   validate_attention_kernel(keys["attention"])
   validate_attention_type(keys["attention_type"])
+  validate_attention_window_params(
+      keys["attention_type"], keys.get("chunk_attn_window_size"), keys.get("sliding_window_size")
+  )
   validate_profiler_type(keys["profiler"])
   validate_periodic_profiler(keys["profiler"], keys["profile_periodically_period"], keys["profiler_steps"])
   validate_compute_axis_order(keys["compute_axis_order"])
@@ -377,7 +403,7 @@ class _HyperParameters:
         loaded_parent_config_filename = os.path.join(os.path.dirname(config_name), parent_config_filename)
         if not os.path.isfile(loaded_parent_config_filename):
           dir_path = os.path.dirname(os.path.realpath(__file__))
-          loaded_parent_config_filename = os.path.join(dir_path, f"configs/{parent_config_filename}")
+          loaded_parent_config_filename = os.path.join(dir_path, "configs", parent_config_filename)
       else:
         loaded_parent_config_filename = parent_config_filename
 
@@ -545,10 +571,10 @@ class _HyperParameters:
       model_name = raw_keys["model_name"]
       # First look at the model configs next to the base_config_path, and
       # fallback to the python codebase if the config cannot be found.
-      file_path = os.path.join(os.path.dirname(base_config_path), f"models/{model_name}.yml")
+      file_path = os.path.join(os.path.dirname(base_config_path), "models", f"{model_name}.yml")
       if not os.path.isfile(file_path):
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        file_path = os.path.join(dir_path, f"configs/models/{model_name}.yml")
+        file_path = os.path.join(dir_path, "configs", "models", f"{model_name}.yml")
       # Use OmegaConf to load the model-specific configuration.
       model_vars = OmegaConf.load(file_path)
       model_vars = OmegaConf.to_container(model_vars, resolve=True)
@@ -564,6 +590,7 @@ def create_parallelisms_list(raw_keys):
       raw_keys["ici_fsdp_parallelism"],
       raw_keys["ici_fsdp_transpose_parallelism"],
       raw_keys["ici_sequence_parallelism"],
+      raw_keys["ici_context_parallelism"],
       raw_keys["ici_context_autoregressive_parallelism"],
       raw_keys["ici_tensor_parallelism"],
       raw_keys["ici_tensor_transpose_parallelism"],
@@ -577,6 +604,7 @@ def create_parallelisms_list(raw_keys):
       raw_keys["dcn_fsdp_parallelism"],
       raw_keys["dcn_fsdp_transpose_parallelism"],
       raw_keys["dcn_sequence_parallelism"],
+      raw_keys["dcn_context_parallelism"],
       raw_keys["dcn_context_autoregressive_parallelism"],
       raw_keys["dcn_tensor_parallelism"],
       raw_keys["dcn_tensor_transpose_parallelism"],
@@ -630,6 +658,7 @@ def validate_multiple_slices(raw_keys):
                   raw_keys["dcn_fsdp_parallelism"],
                   raw_keys["dcn_fsdp_transpose_parallelism"],
                   raw_keys["dcn_sequence_parallelism"],
+                  raw_keys["dcn_context_parallelism"],
                   raw_keys["dcn_tensor_parallelism"],
                   raw_keys["dcn_tensor_sequence_parallelism"],
                   raw_keys["dcn_expert_parallelism"],
@@ -667,6 +696,7 @@ def set_and_validate_pipeline_config(raw_keys):
           raw_keys["ici_fsdp_parallelism"],
           raw_keys["ici_fsdp_transpose_parallelism"],
           raw_keys["ici_sequence_parallelism"],
+          raw_keys["ici_context_parallelism"],
           raw_keys["ici_context_autoregressive_parallelism"],
           raw_keys["ici_tensor_parallelism"],
           raw_keys["ici_tensor_transpose_parallelism"],
@@ -680,6 +710,7 @@ def set_and_validate_pipeline_config(raw_keys):
           raw_keys["dcn_fsdp_parallelism"],
           raw_keys["dcn_fsdp_transpose_parallelism"],
           raw_keys["dcn_sequence_parallelism"],
+          raw_keys["dcn_context_parallelism"],
           raw_keys["dcn_context_autoregressive_parallelism"],
           raw_keys["dcn_tensor_parallelism"],
           raw_keys["dcn_tensor_transpose_parallelism"],
@@ -693,6 +724,7 @@ def set_and_validate_pipeline_config(raw_keys):
           "fsdp",
           "fsdp_transpose",
           "sequence",
+          "context",
           "context_autoregressive",
           "tensor",
           "tensor_transpose",
@@ -707,6 +739,7 @@ def set_and_validate_pipeline_config(raw_keys):
               "fsdp",
               "fsdp_transpose",
               "sequence",
+              "context",
               "context_autoregressive",
               "tensor",
               "tensor_transpose",

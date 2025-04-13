@@ -17,14 +17,15 @@
 import enum
 import functools
 import math
+import numpy as np
 from typing import Any, Optional, Tuple
 
-import common_types
+from MaxText import common_types
 from flax import linen as nn
 from flax.linen import partitioning
-from inference import kvcache
-from inference import page_manager
-from inference import paged_attention
+from MaxText.inference import kvcache
+from MaxText.inference import page_manager
+from MaxText.inference import paged_attention
 import jax
 from jax import lax
 from jax.ad_checkpoint import checkpoint_name
@@ -34,12 +35,12 @@ from jax.experimental.pallas.ops.gpu import decode_attention as gpu_pallas_decod
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask
 import jax.numpy as jnp
-from kernels.ragged_attention import ragged_gqa
-from kernels.ragged_attention import ragged_mha
-from layers import embeddings
-from layers import initializers
-from layers import linears
-from layers import quantizations
+from MaxText.kernels.ragged_attention import ragged_gqa
+from MaxText.kernels.ragged_attention import ragged_mha
+from MaxText.layers import embeddings
+from MaxText.layers import initializers
+from MaxText.layers import linears
+from MaxText.layers import quantizations
 
 
 # pylint: disable=line-too-long, g-doc-args, g-doc-return-or-yield, bad-continuation, g-inconsistent-quotes
@@ -49,6 +50,7 @@ from layers import quantizations
 class AttentionType(enum.Enum):
   GLOBAL = "global"
   LOCAL_SLIDING = "local_sliding"
+  CHUNK = "chunk"
   MLA = "mla"
 
 
@@ -141,6 +143,108 @@ def apply_mask_to_logits(logits: Array, mask: Array):
   return jnp.where((mask >= DEFAULT_MASK_VALUE * 0.5), logits, DEFAULT_MASK_VALUE)
 
 
+# TODO(agagik): change splash_attention_mask._ComputableMask to be non protected
+class ChunkedCausalMask(splash_attention_mask._ComputableMask):
+  """Lazy chunked causal mask.
+
+  Attention is causal within each chunk (0, K), (K, 2K), (2K, 3K), ... tokens attend to each other but not accross chunks.
+  Llama4 models use interleaved chunk attention along with global attention.
+
+  This mask class inherits from splash_attention_mask._ComputableMask and is designed to be used with Splash Attention.
+  It allows the mask logic to be computed on-the-fly or fused into the attention kernel, avoiding the memory cost of
+  materializing the full (sequence_length, sequence_length) boolean mask array, which can be prohibitive for long sequences.
+
+  Attributes:
+    chunk_size: The size of each attention chunk.
+  """
+
+  chunk_size: int
+
+  def __init__(
+      self,
+      shape: tuple[int, int],
+      chunk_size: int,
+      shard_count: int = 1,
+  ):
+    if chunk_size <= 0:
+      raise ValueError("chunk_size must be positive")
+    self.chunk_size = chunk_size
+
+    # Define the mask function for chunk attention
+    def chunked_causal_mask_function(q_ids, kv_ids):
+      """Computes the mask logic for the given slice indices."""
+      if q_ids.size == 0 or kv_ids.size == 0:
+        return np.empty((q_ids.shape[0], kv_ids.shape[1]), dtype=np.bool_)
+
+      # Condition 1: Same chunk
+      q_chunk = q_ids // self.chunk_size
+      kv_chunk = kv_ids // self.chunk_size
+      same_chunk = q_chunk == kv_chunk
+
+      # Condition 2: Causal
+      causal = q_ids >= kv_ids
+
+      return same_chunk & causal
+
+    # Initialize the parent ComputableMask with this function
+    super().__init__(
+        shape=shape,
+        mask_function=chunked_causal_mask_function,
+        shard_count=shard_count,
+    )
+
+  # Implement equality and hashing based on relevant attributes
+  def __eq__(self, other: object):
+    if not isinstance(other, type(self)):
+      return NotImplemented
+    # Compare shape, chunk_size, and the underlying q_sequence array
+    return (
+        self.shape == other.shape
+        and self.chunk_size == other.chunk_size
+        and np.array_equal(self.q_sequence, other.q_sequence)
+    )
+
+  def __hash__(self):
+    return hash(
+        (
+            type(self),
+            self.shape,
+            self.chunk_size,
+            self.q_sequence.tobytes() if self.q_sequence is not None else None,
+        )
+    )
+
+
+def _generate_chunk_attention_mask(mask_shape: tuple[int, int], chunk_size: int) -> jax.Array:
+  """Generates an explicit boolean mask for chunked causal attention.
+
+  This function computes the full boolean mask array where True indicates
+  attention is allowed based on chunked causal rules (tokens attend only
+  within the same chunk, and causally within that chunk).
+
+  Args:
+    mask_shape: The desired shape of the mask (q_seq_len, kv_seq_len).
+    chunk_size: The size of the attention chunks.
+
+  Returns:
+    A boolean mask of shape `mask_shape` where True indicates attention is
+    allowed according to chunked causal rules, and False otherwise.
+
+  Raises:
+    ValueError: If chunk_window_size is None or not positive.
+  """
+
+  row_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 0)
+  col_ids = jax.lax.broadcasted_iota(jnp.int32, mask_shape, 1)
+  if chunk_size <= 0:
+    raise ValueError("chunk_size must be positive")
+
+  # chunk mask calculation
+  same_chunk = (row_ids // chunk_size) == (col_ids // chunk_size)
+  chunk_mask = same_chunk & (row_ids >= col_ids)
+  return chunk_mask
+
+
 class AttentionOp(nn.Module):
   config: Config
   mesh: Mesh
@@ -165,6 +269,7 @@ class AttentionOp(nn.Module):
   attention_type: AttentionType = AttentionType.GLOBAL  # Default to global attention
   attn_logits_soft_cap: float | None = None
   sliding_window_size: int | None = None
+  chunk_attn_window_size: int | None = None
   use_ragged_attention: bool = False
   ragged_block_size: int = 256
 
@@ -225,6 +330,10 @@ class AttentionOp(nn.Module):
       all_ones = jnp.ones_like(output_mask)
       sliding_mask = jnp.triu(all_ones, -1 * self.sliding_window_size + 1) * jnp.tril(all_ones, self.sliding_window_size - 1)
       output_mask = sliding_mask * output_mask
+    elif self.attention_type == AttentionType.CHUNK and output_mask is not None:
+      mask_shape = (q_seq_len, kv_seq_len)
+      chunk_mask = _generate_chunk_attention_mask(mask_shape=(q_seq_len, kv_seq_len), chunk_size=self.chunk_attn_window_size)
+      output_mask = chunk_mask * output_mask
 
     return jnp.where(output_mask, 0.0, DEFAULT_MASK_VALUE) if output_mask is not None else None
 
@@ -464,12 +573,17 @@ class AttentionOp(nn.Module):
       # Apply local masking if local sliding attention is enabled.
       if self.attention_type == AttentionType.LOCAL_SLIDING:
         if self.sliding_window_size is None:
-          raise ValueError("Sliding_window_size must be set if Local Sliding attention type")
+          raise ValueError("Sliding_window_size must be set for Local Sliding attention type")
         mask &= splash_attention_mask.LocalMask(
-            shape=(query.shape[2], query.shape[2]),
+            shape=(query.shape[2], key.shape[2]),
             window_size=(self.sliding_window_size, self.sliding_window_size),
             offset=0,
         )
+      elif self.attention_type == AttentionType.CHUNK:
+        if self.chunk_attn_window_size is None:
+          raise ValueError("chunk_attn_window_size must be set for chunk attention type")
+
+        mask &= ChunkedCausalMask(shape=(query.shape[2], key.shape[2]), chunk_size=self.chunk_attn_window_size)
 
       # Create multi-head mask
       multi_head_mask = splash_attention_mask.MultiHeadMask(masks=(mask,) * query.shape[1])
@@ -486,7 +600,9 @@ class AttentionOp(nn.Module):
 
     devices_in_data_fsdp = self.mesh.shape["data"] * self.mesh.shape["fsdp"]
     assert (query.shape[0] / devices_in_data_fsdp).is_integer(), (
-        "Batch dimension should be shardable among the devices in data and fsdp" " axis"
+        "Batch dimension should be shardable among the devices in data and fsdp"
+        " axis"
+        f" got {query.shape[0]=}/{devices_in_data_fsdp=}"
     )
     x = wrap_flash_attention(query, key, value, decoder_segment_ids)
     x = jnp.transpose(x, axes=(0, 2, 1, 3))
@@ -509,10 +625,17 @@ class AttentionOp(nn.Module):
 
     _, _, _, head_dim = query.shape  # pylint: disable=unused-variable
 
+    using_context_parallelism = self.mesh.shape['context'] > 1
+
+    if self.attention_type == AttentionType.LOCAL_SLIDING and using_context_parallelism:
+      raise AssertionError("Sliding window attention is not supported when context parallelism is enabled")
+
     sliding_window_size = self.sliding_window_size
     if self.attention_type == AttentionType.LOCAL_SLIDING or not self.config.enable_padding_causal_mask:
       sliding_window_size = [self.sliding_window_size, 0]
-      mask_type = "causal"  # SWA only works with causal masking
+
+    if self.attention_type == AttentionType.LOCAL_SLIDING or using_context_parallelism:
+      mask_type = "causal"  # SWA and Context Parallelism only work with causal masking
       attn_mask = None
     else:
       # generate attn_mask
@@ -533,6 +656,8 @@ class AttentionOp(nn.Module):
         scale_factor=1.0 / math.sqrt(head_dim),
         transpose_batch_sequence=False,
         window_size=sliding_window_size,
+        context_parallel_causal_load_balanced=self.config.context_parallel_load_balance,
+        context_parallel_axis="context",
     )
     return dpa_layer(query, key, value, mask=attn_mask)
 
@@ -896,6 +1021,7 @@ class Attention(nn.Module):
         attention_type=self.attention_type,
         attn_logits_soft_cap=self.attn_logits_soft_cap,
         sliding_window_size=self.sliding_window_size,
+        chunk_attn_window_size=self.config.chunk_attn_window_size,
         use_ragged_attention=self.use_ragged_attention,
         ragged_block_size=self.ragged_block_size,
     )
@@ -1123,7 +1249,7 @@ class Attention(nn.Module):
     Returns:
       output of shape `[batch, length, q_features]`.
     """
-    if model_mode == common_types.MODEL_MODE_PREFILL:
+    if model_mode == common_types.MODEL_MODE_PREFILL or model_mode == common_types.MODEL_MODE_TRAIN:
       inputs_q = nn.with_logical_constraint(inputs_q, self.input_axis_names)
       inputs_kv = nn.with_logical_constraint(inputs_kv, self.input_axis_names)
     else:
@@ -1191,7 +1317,7 @@ class Attention(nn.Module):
         cached_values = self.update_kv_caches(key, value, decoder_segment_ids, model_mode, previous_chunk)
       out = self.attention_op(query, key, value, decoder_segment_ids, model_mode, cached_values, previous_chunk)
 
-    if model_mode == common_types.MODEL_MODE_PREFILL:
+    if model_mode == common_types.MODEL_MODE_PREFILL or model_mode == common_types.MODEL_MODE_TRAIN:
       out = nn.with_logical_constraint(out, self.out_axis_names)
     else:
       out = nn.with_logical_constraint(out, self.decode_out_axis_names)

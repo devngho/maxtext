@@ -25,10 +25,10 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import jax
 
-import multihost_dataloading
-import tokenizer
-import sequence_packing
-from input_pipeline import _input_pipeline_utils
+from MaxText import multihost_dataloading
+from MaxText import tokenizer
+from MaxText import sequence_packing
+from MaxText.input_pipeline import _input_pipeline_utils
 
 AUTOTUNE = tf.data.experimental.AUTOTUNE
 
@@ -192,6 +192,8 @@ def make_tfds_train_iterator(
         tokenize=config.tokenize_train_data,
         add_bos=config.add_bos,
         add_eos=config.add_eos,
+        num_epochs=config.num_epoch,
+        pack_examples=config.packing,
         use_dpo=config.use_dpo,
         hf_access_token=config.hf_access_token,
     )
@@ -217,6 +219,8 @@ def make_tfds_train_iterator(
         tokenize=config.tokenize_train_data,
         add_bos=config.add_bos,
         add_eos=config.add_eos,
+        num_epochs=config.num_epoch,
+        pack_examples=config.packing,
         use_dpo=config.use_dpo,
         hf_access_token=config.hf_access_token,
     )
@@ -253,6 +257,7 @@ def make_tfds_eval_iterator(
         tokenize=config.tokenize_eval_data,
         add_bos=config.add_bos,
         add_eos=config.add_eos,
+        pack_examples=config.packing,
         use_dpo=config.use_dpo,
         hf_access_token=config.hf_access_token,
     )
@@ -277,6 +282,7 @@ def make_tfds_eval_iterator(
         tokenize=config.tokenize_eval_data,
         add_bos=config.add_bos,
         add_eos=config.add_eos,
+        pack_examples=config.packing,
         use_dpo=config.use_dpo,
         hf_access_token=config.hf_access_token,
     )

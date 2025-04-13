@@ -215,8 +215,9 @@ param_scan_axis: 1
 # The attention parameter dictates the specific algorithm/methodology used to compute the attention scores
 # The attention_type parameter determines the variants of attention, e.g. global or local_sliding
 attention: 'autoselected' # Supported attention: autoselected, dot_product, flash, cudnn_flash_te
-attention_type: 'global' # Supported attention_type: global, local_sliding, mla
+attention_type: 'global' # Supported attention_type: global, local_sliding, chunk, mla
 sliding_window_size: 0
+chunk_attn_window_size: 0
 attn_logits_soft_cap: 0.0
 final_logits_soft_cap: 0.0
 use_post_attn_norm: False
@@ -265,15 +266,16 @@ jax_cache_dir: "~/jax_cache"
 hardware: 'tpu' # Supported hardware types are 'tpu', 'gpu', 'gpu_multiprocess' and 'cpu'
 
 # Parallelism
-mesh_axes: ['data', 'stage', 'fsdp', 'fsdp_transpose', 'sequence', 'context_autoregressive', 'tensor', 'tensor_transpose', 'tensor_sequence', 'expert', 'autoregressive']
+mesh_axes: ['data', 'stage', 'fsdp', 'fsdp_transpose', 'sequence', 'context', 'context_autoregressive', 'tensor', 'tensor_transpose', 'tensor_sequence', 'expert', 'autoregressive']
 logical_axis_rules: [
                       ['activation_batch', ['data', 'fsdp', 'fsdp_transpose', 'expert']],
                       ['activation_batch_no_exp', ['data', 'fsdp', 'fsdp_transpose']],
                       ['activation_embed_and_logits_batch', ['data', 'stage', 'fsdp', 'fsdp_transpose', 'expert']],
                       ['activation_heads', ['tensor', 'tensor_transpose', 'sequence','tensor_sequence','autoregressive']],
                       ['activation_kv_heads', ['tensor', 'tensor_transpose', 'sequence','tensor_sequence']],
-                      ['activation_length', ['sequence']],
-                      ['activation_norm_length', ['tensor_sequence', 'sequence']],
+                      ['activation_length', ['sequence', 'context']],
+                      ['activation_length', ['context']],
+                      ['activation_norm_length', ['tensor_sequence', 'context', 'sequence']],
                       ['activation_embed', ['tensor', 'tensor_transpose']],
                       ['activation_mlp', ['tensor', 'tensor_transpose', 'tensor_sequence']],
                       ['activation_kv', ['tensor', 'tensor_transpose', 'tensor_sequence']],
@@ -293,14 +295,14 @@ logical_axis_rules: [
                       ['heads', ['tensor', 'tensor_transpose', 'tensor_sequence', 'autoregressive']],
                       ['q_heads', ['tensor', 'tensor_transpose', 'tensor_sequence', 'autoregressive']],
                       ['kv_heads', ['tensor', 'tensor_transpose', 'tensor_sequence', 'autoregressive']],
-                      ['embed', ['fsdp', 'fsdp_transpose', 'sequence', 'tensor_transpose', 'expert']],
-                      ['embed', ['fsdp', 'sequence', 'tensor_transpose', 'expert']],
-                      ['embed', ['fsdp', 'fsdp_transpose', 'sequence', 'expert']],
-                      ['embed', ['fsdp', 'sequence', 'expert']],
-                      ['embed_no_exp', ['fsdp', 'fsdp_transpose', 'sequence', 'tensor_transpose']],
-                      ['embed_no_exp', ['fsdp', 'sequence', 'tensor_transpose']],
-                      ['embed_no_exp', ['fsdp', 'fsdp_transpose', 'sequence']],
-                      ['embed_no_exp', ['fsdp', 'sequence']],
+                      ['embed', ['fsdp', 'fsdp_transpose', 'context', 'sequence', 'tensor_transpose', 'expert']],
+                      ['embed', ['fsdp', 'context', 'sequence', 'tensor_transpose', 'expert']],
+                      ['embed', ['fsdp', 'fsdp_transpose', 'context', 'sequence', 'expert']],
+                      ['embed', ['fsdp', 'context', 'sequence', 'expert']],
+                      ['embed_no_exp', ['fsdp', 'fsdp_transpose', 'context', 'sequence', 'tensor_transpose']],
+                      ['embed_no_exp', ['fsdp', 'context', 'sequence', 'tensor_transpose']],
+                      ['embed_no_exp', ['fsdp', 'fsdp_transpose', 'context', 'sequence']],
+                      ['embed_no_exp', ['fsdp', 'context', 'sequence']],
                       ['q_lora', ['fsdp', 'fsdp_transpose', 'sequence', 'tensor_transpose', 'expert']],
                       ['q_lora', ['fsdp', 'sequence', 'tensor_transpose', 'expert']],
                       ['q_lora', ['fsdp', 'fsdp_transpose', 'sequence', 'expert']],
@@ -327,7 +329,7 @@ logical_axis_rules: [
                       ['paged_kv_head_dim_size', []],
                     ]
 # Axes used for DCN must be earlier in this list than ICI, see (b/339009148) for details
-data_sharding: [['data', 'stage', 'fsdp', 'fsdp_transpose', 'sequence', 'context_autoregressive', 'tensor', 'tensor_transpose', 'tensor_sequence', 'expert', 'autoregressive']]
+data_sharding: [['data', 'stage', 'fsdp', 'fsdp_transpose', 'sequence', 'context', 'context_autoregressive', 'tensor', 'tensor_transpose', 'tensor_sequence', 'expert', 'autoregressive']]
 
 # sharding tolerance: float between 0.0 and 1.0 representing the allowed percentage of non-sharded parameters.
 sharding_tolerance: 0.02
@@ -340,6 +342,7 @@ dcn_data_parallelism: -1  # recommended DCN axis to be auto-sharded
 dcn_fsdp_parallelism: 1
 dcn_fsdp_transpose_parallelism: 1
 dcn_sequence_parallelism: 1  # never recommended
+dcn_context_parallelism: 1
 dcn_context_autoregressive_parallelism: 1
 dcn_tensor_parallelism: 1 # never recommended
 dcn_tensor_transpose_parallelism: 1
@@ -351,6 +354,7 @@ ici_data_parallelism: 1
 ici_fsdp_parallelism: -1 # recommended ICI axis to be auto-sharded
 ici_fsdp_transpose_parallelism: 1
 ici_sequence_parallelism: 1
+ici_context_parallelism: 1
 ici_context_autoregressive_parallelism: 1
 ici_tensor_parallelism: 1
 ici_tensor_transpose_parallelism: 1
@@ -384,6 +388,7 @@ max_corpus_chars: 10_000_000
 train_data_columns: ['text'] # for DPO dataset containing "chosen" and "rejected"
 eval_data_columns: ['text'] # for DPO dataset containing "chosen" and "rejected"
 packing: True
+num_epoch: 1  # only grain and tfds pipeline supports num_epoch > 1
 
 # direct preference optimization (DPO)
 use_dpo: False
@@ -419,7 +424,9 @@ hf_checkpoint_dataset_iterator: True
 # for Grain input pipeline (dataset_type=grain)
 grain_train_files: ''
 grain_eval_files: ''
+grain_file_type: 'arrayrecord' # arrayrecord or parquet 
 grain_worker_count: 1
+grain_worker_count_eval: 1
 # for using pathways
 colocated_python_data_input: False  # experimental feature, under testing
 
@@ -651,6 +658,9 @@ sa_use_fused_bwd_kernel: False
 sa_q_layout: "HEAD_DIM_MINOR"
 sa_k_layout: "HEAD_DIM_MINOR"
 sa_v_layout: "HEAD_DIM_MINOR"
+
+### Determine if we want to use load balance for context parallelism
+context_parallel_load_balance: True
 
 #######################
 ### Paged Attention ###

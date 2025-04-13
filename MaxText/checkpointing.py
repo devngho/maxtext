@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from orbax.checkpoint.checkpoint_manager import JsonCheckpointHandler
 
 """Create an Orbax CheckpointManager with specified (Async or not) Checkpointer."""
 
@@ -23,9 +22,8 @@ from etils import epath
 from flax.training import train_state
 import grain.python as grain
 import jax
-import max_logging
-import pyconfig
-from multihost_dataloading import MultiHostDataLoadIterator
+from MaxText import max_logging
+from MaxText.multihost_dataloading import MultiHostDataLoadIterator
 import numpy as np
 import orbax.checkpoint as ocp
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
@@ -76,7 +74,6 @@ def create_orbax_checkpoint_manager(
   # we need to use ocdbt and zarr3 to control max file size in the checkpoint
   # omitting `iter` uses default handler for `iter`
   item_handlers = {"items": PyTreeCheckpointHandler(use_ocdbt=use_ocdbt, use_zarr3=use_zarr3)}
-
   mngr = CheckpointManager(
       p,
       item_names=item_names,

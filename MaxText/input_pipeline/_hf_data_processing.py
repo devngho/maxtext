@@ -26,9 +26,9 @@ import transformers
 import grain.python as grain
 import numpy as np
 
-from input_pipeline import _input_pipeline_utils
-import multihost_dataloading
-import max_logging
+from MaxText.input_pipeline import _input_pipeline_utils
+from MaxText import multihost_dataloading
+from MaxText import max_logging
 
 
 def preprocessing_pipeline(
@@ -65,7 +65,7 @@ def preprocessing_pipeline(
   data_column_names_ = tuple(data_column_names)
 
   if shuffle:
-      dataset = dataset.shuffle(seed=data_shuffle_seed)
+    dataset = dataset.shuffle(seed=data_shuffle_seed)
 
   if use_sft:
     dataset = dataset.select_columns(data_column_names)

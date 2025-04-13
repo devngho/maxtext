@@ -37,27 +37,27 @@ import orbax.checkpoint
 import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
 import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
-import checkpointing
-import max_utils
-import maxtext_utils
-import max_logging
-import optimizers
-import profiler
-import pyconfig
-import pathwaysutils
+from MaxText import checkpointing
+from MaxText import max_utils
+from MaxText import maxtext_utils
+from MaxText import max_logging
+from MaxText import optimizers
+from MaxText import profiler
+from MaxText import pyconfig
+import pathwaysutils  # pylint: disable=unused-import
 import tensorflow as tf
 import wandb
 
-from metric_logger import MetricLogger
-from utils import gcs_utils
+from MaxText.metric_logger import MetricLogger
+from MaxText.utils import gcs_utils
 
-from vertex_tensorboard import VertexTensorboardManager
+from MaxText.vertex_tensorboard import VertexTensorboardManager
 # Placeholder: internal
 
-from input_pipeline.input_pipeline_interface import create_data_iterator
-from layers import models
+from MaxText.input_pipeline.input_pipeline_interface import create_data_iterator
+from MaxText.layers import models
 
-from gcp_workload_monitor import GCPWorkloadMonitor
+from MaxText.gcp_workload_monitor import GCPWorkloadMonitor
 
 import jax.numpy as jnp
 from jax import random, NamedSharding
@@ -69,7 +69,7 @@ from cloud_tpu_diagnostics.configuration import debug_configuration
 from cloud_tpu_diagnostics.configuration import diagnostic_configuration
 from cloud_tpu_diagnostics.configuration import stack_trace_configuration
 
-from layers import quantizations
+from MaxText.layers import quantizations
 
 from ml_goodput_measurement import goodput
 from ml_goodput_measurement import monitoring
@@ -96,6 +96,14 @@ def validate_train_config(config):
     assert (
         config.gradient_accumulation_steps == 1
     ), "fp8 can't be used with gradient_accumulation_steps right now. Please use other quantization or set gradient_accumulation_steps to 1"
+
+  # Check if GPU Flash Attention is being used with sequence packing
+  if config.attention == "cudnn_flash_te" and config.packing and config.dataset_type != "synthetic":
+    raise ValueError(
+        "cudnn_flash_te only supports BSHD format. The THD (seq packing) support is going to be available in Transformer Engine 2.0 release. "
+        "Please disable sequence packing (set packing=False) or use a different attention mechanism. "
+        "With synthetic data, the format is not important as packing is not applied."
+    )
 
 
 def get_first_step(state):
@@ -742,6 +750,21 @@ def setup_train_loop(config):
   record_goodput(recorder, config, recorder.record_training_preparation_start_time if recorder else None)
   data_iterator, eval_data_iterator = create_data_iterator(config, mesh)
 
+  context_parallel_size = mesh.shape['context']
+  # Check if context parallelism is being used with sequence packing
+  if context_parallel_size > 1 and config.packing and config.dataset_type != "synthetic":
+    raise ValueError(
+        "Context parallelism cannot be used with sequence packing except for synthetic data where packing is not applied. "
+        "Either disable sequence packing (set packing=False) or disable context parallelism. "
+        "Context parallelism with packing support will be added soon."
+    )
+
+  # Apply reordering wrapper to data iterators if context parallelism is enabled
+  if context_parallel_size > 1 and config.context_parallel_load_balance:
+    data_iterator = map(max_utils.get_reorder_callable(context_parallel_size), data_iterator)
+    if eval_data_iterator:
+      eval_data_iterator = map(max_utils.get_reorder_callable(context_parallel_size), eval_data_iterator)
+
   state, _, state_mesh_shardings, data_iterator = max_utils.setup_training_state(
       model, data_iterator, tx, config, init_rng, mesh, checkpoint_manager
   )
@@ -1014,12 +1037,12 @@ def train_loop(config, state=None):
       max_utils.print_mem_stats("After params initialized")
 
   if checkpoint_manager is not None:
-    if int(state.step) - 1 % config.checkpoint_period != 0:
+    if (int(state.step) - 1) % config.checkpoint_period != 0:
       try:
         state_to_save = state if not config.use_dpo else _split_dpo_state(state)[0]
         if save_checkpoint(
             checkpoint_manager,
-            int(state_to_save),
+            int(state.step),
             state_to_save,
             config.dataset_type,
             data_iterator,

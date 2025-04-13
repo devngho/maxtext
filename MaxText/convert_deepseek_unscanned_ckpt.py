@@ -15,7 +15,7 @@ r"""Convert weights from a DeepSeek style model to a MaxText one.
 
 Example cmd:
 
-python3 MaxText/convert_deepseek_unscanned_ckpt.py --base_model_path <path/to/meta/ckpt> \
+python3 -m MaxText.convert_deepseek_unscanned_ckpt --base_model_path <path/to/meta/ckpt> \
     --maxtext_model_path <GCS/path/to/save/new/maxtext/ckpt> --model_size deepseek2-16b
 """
 
@@ -34,8 +34,8 @@ import torch
 import psutil
 from tqdm import tqdm
 
-import max_logging
-from inference_utils import str2bool
+from MaxText import max_logging
+from MaxText.inference_utils import str2bool
 from safetensors import safe_open
 import llama_or_mistral_ckpt
 import convert_deepseek_ckpt as ds_ckpt
