@@ -85,7 +85,7 @@ def validate_train_config(config):
   """Validates the configuration is set correctly for train.py"""
 
   assert config.run_name, "Erroring out, need a real run_name"
-  if not config.dataset_path.startswith("gs://"):
+  if config.dataset_path and not config.dataset_path.startswith("gs://"):
     max_logging.log("WARNING: 'dataset_path' might be pointing your local file system")
   if not config.base_output_directory.startswith("gs://"):
     max_logging.log("WARNING: 'base_output_directory' might be pointing your local file system")
@@ -107,8 +107,7 @@ def validate_train_config(config):
 
 
 def get_first_step(state):
-  with jax.spmd_mode("allow_all"):
-    return int(state.step)
+  return int(state.step)
 
 
 def load_next_batch(train_iter, example_batch, config):
@@ -465,6 +464,7 @@ def loss_fn(model, config, data, dropout_rng, params, is_train=True):
       data["inputs"],
       data["inputs_position"],
       decoder_segment_ids=data["inputs_segmentation"],
+      encoder_images=data["images"] if config.use_multimodal else None,
       enable_dropout=config.enable_dropout if is_train else False,
       rngs={"dropout": rng1, "params": aqt_rng},
       mutable="intermediates",
@@ -548,7 +548,7 @@ def train_step(model, config, state_mesh_shardings, state, data, dropout_rng):
         + grad_and_loss["moe_lb_loss"] / config.gradient_accumulation_steps
     )
     raw_grads = jax.tree_util.tree_map(lambda arr: arr / grad_and_loss["total_weights"], grad_and_loss["grad"])
-    aux = jax.tree_map(lambda x: jnp.sum(x, axis=0), aux)  # pytype: disable=module-attr
+    aux = jax.tree.map(lambda x: jnp.sum(x, axis=0), aux)  # pytype: disable=module-attr
   else:
     if config.optimizer_memory_host_offload:
       cast_params = jax.device_put(state.params, max_utils.with_memory_kind(state_mesh_shardings.params, "device"))
@@ -656,11 +656,12 @@ def check_example_batch(config, example_batch):
     err.throw()
 
 
-def setup_mesh_and_model(config):
+def setup_mesh_and_model(config, devices=None):
   """Set up the mesh and the model for training
 
   Args:
     config
+    devices
 
   Returns:
     init_rng: RNG key
@@ -674,16 +675,16 @@ def setup_mesh_and_model(config):
   """
 
   init_rng = random.PRNGKey(config.init_weights_seed)
-  writer = max_utils.initialize_summary_writer(config)
+  writer = max_utils.initialize_summary_writer(config.tensorboard_dir, config.run_name)
 
   # Mesh definition
-  devices_array = max_utils.create_device_mesh(config)
+  devices_array = maxtext_utils.create_device_mesh(config, devices)
   mesh = Mesh(devices_array, config.mesh_axes)
 
   # Model and Optimizer definition
   quant = quantizations.configure_quantization(config)
   model = Transformer(config, mesh, quant=quant)
-  learning_rate_schedule = max_utils.create_learning_rate_schedule(config)
+  learning_rate_schedule = maxtext_utils.create_learning_rate_schedule(config)
   tx = optimizers.get_optimizer(config, learning_rate_schedule)
   logger = checkpointing.setup_checkpoint_logger(config)
   if config.enable_emergency_checkpoint:
@@ -694,7 +695,7 @@ def setup_mesh_and_model(config):
           mesh,
       )
     else:
-      abstract_state, _, _ = max_utils.get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
+      abstract_state, _, _ = maxtext_utils.get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
       checkpoint_manager = checkpointing.create_orbax_emergency_checkpoint_manager(
           config.local_checkpoint_directory,
           config.checkpoint_dir,
@@ -750,7 +751,7 @@ def setup_train_loop(config):
   record_goodput(recorder, config, recorder.record_training_preparation_start_time if recorder else None)
   data_iterator, eval_data_iterator = create_data_iterator(config, mesh)
 
-  context_parallel_size = mesh.shape['context']
+  context_parallel_size = mesh.shape["context"]
   # Check if context parallelism is being used with sequence packing
   if context_parallel_size > 1 and config.packing and config.dataset_type != "synthetic":
     raise ValueError(
@@ -765,7 +766,7 @@ def setup_train_loop(config):
     if eval_data_iterator:
       eval_data_iterator = map(max_utils.get_reorder_callable(context_parallel_size), eval_data_iterator)
 
-  state, _, state_mesh_shardings, data_iterator = max_utils.setup_training_state(
+  state, _, state_mesh_shardings, data_iterator = maxtext_utils.setup_training_state(
       model, data_iterator, tx, config, init_rng, mesh, checkpoint_manager
   )
 
@@ -774,7 +775,7 @@ def setup_train_loop(config):
     maxtext_utils.assert_params_sufficiently_sharded(state.params, mesh, config.sharding_tolerance)
 
   if config.use_dpo:
-    abstract_state, _, _ = max_utils.get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
+    abstract_state, _, _ = maxtext_utils.get_abstract_state(model, tx, config, init_rng, mesh, is_training=True)
     max_logging.log(f"Restoring reference parameters for DPO from '{os.path.join(str(config.checkpoint_dir), str(0))}'")
     try:
       step0_restored, _ = checkpointing.load_state_if_possible(
@@ -873,7 +874,7 @@ def train_loop(config, state=None):
   # Write train config params, num model params, and XLA flags to tensorboard
   max_utils.add_text_to_summary_writer("num_model_parameters", str(num_model_parameters), writer)
   max_utils.add_text_to_summary_writer("libtpu_init_args", os.environ["LIBTPU_INIT_ARGS"], writer)
-  max_utils.add_config_to_summary_writer(config, writer)
+  maxtext_utils.add_config_to_summary_writer(config, writer)
 
   # Define the compilation of functional_train, either by loading the compiled version or wrapping a new one in a jit
   if config.compiled_trainstep_file != "":
@@ -963,7 +964,7 @@ def train_loop(config, state=None):
     last_step_completion = datetime.datetime.now()
     record_scalar_metrics(metrics, step_time_delta, per_device_tflops, learning_rate_schedule(step), per_device_tokens)
     if performance_metric_queue:
-        performance_metric_queue.put(step_time_delta.total_seconds())
+      performance_metric_queue.put(step_time_delta.total_seconds())
 
     if checkpoint_manager is not None:
       state_to_save = state if not config.use_dpo else _split_dpo_state(state)[0]
@@ -1049,10 +1050,9 @@ def train_loop(config, state=None):
             config,
             force=True,
         ):
-          checkpointing.print_save_message(int(state_to_save) - 1, config.async_checkpointing)
+          checkpointing.print_save_message(int(state.step), config.async_checkpointing)
       except Exception as e:  # pylint: disable=broad-except
-        max_logging.log(f"Checkpointing failed with error: {e}")
-        max_logging.log(f"Checkpoint is already saved for step {int(state.step)-1}.")
+        max_logging.log(f"Checkpoint is already saved for step {int(state.step)}.")
 
     checkpoint_manager.wait_until_finished()
   metric_logger.write_metrics(running_gcs_metrics, metrics, config.steps - 1)  # final step metrics
@@ -1085,7 +1085,7 @@ def main(argv: Sequence[str]) -> None:
   max_utils.print_system_information()
   jax.config.update("jax_debug_nans", config.jax_debug_nans)
   validate_train_config(config)
-  os.environ["TFDS_DATA_DIR"] = config.dataset_path
+  os.environ["TFDS_DATA_DIR"] = config.dataset_path or ""
   vertex_tensorboard_manager = VertexTensorboardManager()
   if config.use_vertex_tensorboard or os.environ.get("UPLOAD_DATA_TO_TENSORBOARD"):
     vertex_tensorboard_manager.configure_vertex_tensorboard(config)

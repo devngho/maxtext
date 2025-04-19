@@ -34,7 +34,7 @@ from flax import linen as nn
 from MaxText.globals import PKG_DIR
 
 
-from MaxText import max_utils
+from MaxText import maxtext_utils
 from MaxText import pyconfig
 from MaxText.layers import models
 from MaxText.layers import quantizations
@@ -56,10 +56,10 @@ def get_golden_data(config):
 def setup_maxtext_model(config):
   init_rng = jax.random.PRNGKey(config.init_weights_seed)
   quant = quantizations.configure_quantization(config)
-  devices_array = max_utils.create_device_mesh(config)
+  devices_array = maxtext_utils.create_device_mesh(config)
   mesh = Mesh(devices_array, config.mesh_axes)
   maxtext_model = models.Transformer(config=config, mesh=mesh, quant=quant)
-  state, state_mesh_annotations = max_utils.setup_decode_state(maxtext_model, config, init_rng, mesh, None)
+  state, state_mesh_annotations = maxtext_utils.setup_decode_state(maxtext_model, config, init_rng, mesh, None)
   state_mesh_shardings = nn.logical_to_mesh_sharding(state_mesh_annotations, mesh, config.logical_axis_rules)
   data_sharding = jax.NamedSharding(mesh, jax.sharding.PartitionSpec(None))
   reference_params = jax.tree.map(jnp.copy, state.params["params"])
@@ -82,17 +82,16 @@ def prepare_maxtext_inputs(input_str, tokenizer_model):
   return input_ids, input_segmentation, input_position, completion_segmentation
 
 
-
 class GrpoTrainerTest(unittest.TestCase):
 
   def setUp(self):
     super().setUp()
     command = [
-      "gsutil",
-      "cp",
-      "-r",
-      "gs://maxtext-dataset/hf/llama3.1-tokenizer",
-      os.path.join(os.path.dirname(PKG_DIR), "assets", ""),
+        "gsutil",
+        "cp",
+        "-r",
+        "gs://maxtext-dataset/hf/llama3.1-tokenizer",
+        os.path.join(os.path.dirname(PKG_DIR), "assets", ""),
     ]
     exit_code = subprocess.call(command, cwd=os.path.dirname(PKG_DIR))
     if exit_code != 0:
@@ -100,13 +99,13 @@ class GrpoTrainerTest(unittest.TestCase):
     self.config = pyconfig.initialize(
         [None, "MaxText/experimental/rl/grpo_trainer_test.yml"],
         run_name="unit_test_grpo_trainer",
-        tokenizer_path=os.path.join(os.path.dirname(PKG_DIR), 'assets', 'llama3.1-tokenizer'),
+        tokenizer_path=os.path.join(os.path.dirname(PKG_DIR), "assets", "llama3.1-tokenizer"),
         enable_checkpointing=False,
     )
     self.config_inference = pyconfig.initialize(
         [None, "MaxText/experimental/rl/grpo_trainer_test.yml"],
         run_name="unit_test_grpo_trainer_inference",
-        tokenizer_path=os.path.join(os.path.dirname(PKG_DIR), 'assets', 'llama3.1-tokenizer'),
+        tokenizer_path=os.path.join(os.path.dirname(PKG_DIR), "assets", "llama3.1-tokenizer"),
         enable_checkpointing=False,
         ici_tensor_parallelism=4,
         per_device_batch_size=self.config.per_device_batch_size * self.config.num_generations,
@@ -115,11 +114,11 @@ class GrpoTrainerTest(unittest.TestCase):
     self.atol = 1e-08
     self.rng = jax.random.PRNGKey(self.config.init_weights_seed)
     self.tokenizer_model = transformers.AutoTokenizer.from_pretrained(
-      self.config.tokenizer_path,
-      add_bos_token=self.config.add_bos,
-      add_eos_token=self.config.add_eos,
-      legacy=False,
-      padding_side="left"
+        self.config.tokenizer_path,
+        add_bos_token=self.config.add_bos,
+        add_eos_token=self.config.add_eos,
+        legacy=False,
+        padding_side="left",
     )
     self.tokenizer_model.add_special_tokens({"pad_token": "<pad>"})
 
@@ -135,22 +134,23 @@ class GrpoTrainerTest(unittest.TestCase):
     )
     # Obtain per-token logits.
     maxtext_per_token_logps, _ = compute_log_probs(
-      maxtext_model,
-      state.params,
-      input_ids,
-      input_position,
-      input_segmentation,
-      completion_segmentation,
-      self.config,
-      is_train=False,
-      rngs=self.rng,
+        maxtext_model,
+        state.params,
+        input_ids,
+        input_position,
+        input_segmentation,
+        completion_segmentation,
+        self.config,
+        is_train=False,
+        rngs=self.rng,
     )
-    jax.debug.print("maxtext_per_token_logps={maxtext_per_token_logps}",maxtext_per_token_logps=maxtext_per_token_logps)
-    jax.debug.print("golden_per_token_logps={golden_per_token_logps}",golden_per_token_logps=golden_data["maxtext_per_token_logps_no_ckpt_loading"])
+    jax.debug.print("maxtext_per_token_logps={maxtext_per_token_logps}", maxtext_per_token_logps=maxtext_per_token_logps)
+    jax.debug.print(
+        "golden_per_token_logps={golden_per_token_logps}",
+        golden_per_token_logps=golden_data["maxtext_per_token_logps_no_ckpt_loading"],
+    )
     golden_maxtext_logits = np.array(golden_data["maxtext_per_token_logps_no_ckpt_loading"])
-    self.assertTrue(
-      jnp.all(np.array(golden_data["input_ids"]) == np.array(input_ids[0]))
-    )
+    self.assertTrue(jnp.all(np.array(golden_data["input_ids"]) == np.array(input_ids[0])))
     self.assertTrue(
         jax.numpy.allclose(
             maxtext_per_token_logps[0],

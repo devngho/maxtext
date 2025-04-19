@@ -15,16 +15,13 @@ limitations under the License.
 """
 
 """ Common Max Utils needed by multiple modules"""
+""" All the functions include MaxText modules, such as Pyconfig, should be moved to MaxText utils file."""
 import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.experimental import mesh_utils
-from MaxText.inference.page_manager import PageState
-from MaxText import checkpointing
-from MaxText import common_types
 import functools
 import time
-import optax
 import os
 import psutil
 import socket
@@ -32,22 +29,16 @@ import subprocess
 from etils import epath
 from collections.abc import Sequence
 import collections
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple
 from functools import partial
 
 from MaxText import max_logging
 
 
 import orbax.checkpoint as ocp
-import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
-import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
 
 
 import flax
-from flax.training import train_state
-from flax import linen as nn
-from flax.linen import partitioning as nn_partitioning
-
 from tensorboardX import writer
 
 HYBRID_RING_64X4 = "hybrid_ring_64x4"
@@ -109,21 +100,14 @@ def summarize_size_from_pytree(params):
   return num_params, num_bytes, num_bytes / num_params
 
 
-def initialize_summary_writer(config):
-  summary_writer_path = os.path.join(config.tensorboard_dir, config.run_name)
+def initialize_summary_writer(tensorboard_dir, run_name):
+  summary_writer_path = os.path.join(tensorboard_dir, run_name)
   return writer.SummaryWriter(summary_writer_path) if jax.process_index() == 0 else None
 
 
 def close_summary_writer(summary_writer):
   if jax.process_index() == 0:
     summary_writer.close()
-
-
-def add_config_to_summary_writer(config, summary_writer):
-  """Writes config params to tensorboard"""
-  if jax.process_index() == 0:
-    for key, value in config.get_keys().items():
-      add_text_to_summary_writer(key, str(value), summary_writer)
 
 
 def add_text_to_summary_writer(key, value, summary_writer):
@@ -535,63 +519,6 @@ def optimize_mesh_for_tpu_v6e(mesh, devices):
   return new_mesh
 
 
-def create_device_mesh(config, devices=None):
-  """Creates a device mesh with each slice in its own data parallel group. If there is only one slice, uses two replicas"""
-  if devices is None:
-    devices = jax.devices()
-  num_devices = len(devices)
-  num_slices = 1 if config.inference_benchmark_test else config.num_slices
-  num_devices_per_slice = num_devices // num_slices
-
-  multi_slice_env = num_slices > 1
-
-  # Find possible unspecified parallelisms
-  ici_parallelism = fill_unspecified_mesh_axes(config.ici_parallelism.copy(), num_devices_per_slice, "ICI")
-
-  allow_split_physical_axes = config.allow_split_physical_axes if config.allow_split_physical_axes else False
-
-  if multi_slice_env:
-    dcn_parallelism = fill_unspecified_mesh_axes(config.dcn_parallelism.copy(), num_slices, "DCN")
-    if is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
-      mesh = create_custom_device_mesh(ici_parallelism, dcn_parallelism, devices, config.custom_mesh)
-    else:
-      mesh = mesh_utils.create_hybrid_device_mesh(
-          ici_parallelism,
-          dcn_parallelism,
-          devices,
-          allow_split_physical_axes=allow_split_physical_axes,
-      )
-  else:
-    if allow_split_physical_axes:
-      if is_valid_custom_mesh(ici_parallelism, config.custom_mesh):
-        mesh = mesh_utils.create_device_mesh(
-            [16, 16],
-            devices,
-            contiguous_submeshes=False,
-            allow_split_physical_axes=False,
-        )
-        mesh = reshape_mesh_to_rings(mesh, config.custom_mesh)
-        mesh = np.reshape(mesh, ici_parallelism)
-      else:
-        mesh = mesh_utils.create_device_mesh(
-            ici_parallelism,
-            devices,
-            contiguous_submeshes=False,
-            allow_split_physical_axes=allow_split_physical_axes,
-        )
-    else:
-      mesh = mesh_utils.create_device_mesh(
-          ici_parallelism,
-          devices,
-      )
-      if config.optimize_mesh_for_tpu_v6e:
-        mesh = optimize_mesh_for_tpu_v6e(mesh, devices)
-
-  max_logging.log(f"Num_devices: {num_devices}, shape {mesh.shape}")
-
-  return mesh
-
-
 def unbox_logicallypartioned(boxed_pytree):
   """Unboxes the flax.LogicallyPartitioned pieces
 
@@ -906,90 +833,6 @@ def _cross_entropy_with_logits_bwd(
 cross_entropy_with_logits.defvjp(_cross_entropy_with_logits_fwd, _cross_entropy_with_logits_bwd)
 
 
-def get_abstract_state(model, tx, config, rng, mesh, is_training=True):
-  """Get a shaped abstraction of the state (including optimizer)"""
-  init_state_partial = functools.partial(init_initial_state, model, tx, config, is_training, rng)
-
-  with nn_partitioning.axis_rules(config.logical_axis_rules):
-    abstract_state = jax.eval_shape(init_state_partial)
-
-  state_logical_annotations = nn.get_partition_spec(abstract_state)
-
-  state_mesh_shardings = nn.logical_to_mesh_sharding(state_logical_annotations, mesh, config.logical_axis_rules)
-  if is_training and config.optimizer_memory_host_offload:
-    opt_state = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), state_mesh_shardings.opt_state)
-    params = jax.tree_util.tree_map(lambda x: x.with_memory_kind(kind="pinned_host"), state_mesh_shardings.params)
-    state_mesh_shardings = state_mesh_shardings.replace(opt_state=opt_state, params=params)
-
-  abstract_sharded_state = jax.jit(init_state_partial, in_shardings=None, out_shardings=state_mesh_shardings).eval_shape()
-
-  unboxed_abstract_sharded_state = unbox_logicallypartioned(abstract_sharded_state)
-  # Initialization
-  with mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
-    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
-  return (
-      unboxed_abstract_sharded_state,
-      state_mesh_annotations,
-      state_mesh_shardings,
-  )
-
-
-def get_prefill_kv_cache_annotations(model, config, rng, mesh, page_state: Optional[PageState] = None):
-  """Get a shaped abstraction of the state (including optimizer)"""
-
-  def init_kv_cache(model, config):
-    input_shape = (
-        config.global_batch_size_to_load,
-        config.max_prefill_predict_length,
-    )
-
-    model_vars = model.init(
-        {"params": rng, "dropout": rng, "aqt": rng},
-        jnp.ones(input_shape),
-        jnp.ones(input_shape),
-        model_mode=common_types.MODEL_MODE_PREFILL,
-        slot=0,
-        page_state=page_state,
-    )
-    return model_vars["cache"]
-
-  with nn_partitioning.axis_rules(config.logical_axis_rules):
-    init_kv_cache_partial = functools.partial(init_kv_cache, model, config)
-    abstract_state = jax.eval_shape(init_kv_cache_partial)
-  state_logical_annotations = nn.get_partition_spec(abstract_state)
-  with mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
-    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
-  return state_mesh_annotations
-
-
-def get_kv_cache_annotations(model, config, rng, mesh, page_state: Optional[PageState] = None):
-  """Get a shaped abstraction of the state (including optimizer)"""
-
-  def init_kv_cache(model, config):
-    input_shape = (
-        config.global_batch_size_to_load,
-        1,
-    )
-
-    model_vars = model.init(
-        {"params": rng, "dropout": rng, "aqt": rng},
-        jnp.ones(input_shape),
-        jnp.ones(input_shape),
-        model_mode=common_types.MODEL_MODE_AUTOREGRESSIVE,
-        slot=0,
-        page_state=page_state,
-    )
-    return model_vars["cache"]
-
-  with nn_partitioning.axis_rules(config.logical_axis_rules):
-    init_kv_cache_partial = functools.partial(init_kv_cache, model, config)
-    abstract_state = jax.eval_shape(init_kv_cache_partial)
-  state_logical_annotations = nn.get_partition_spec(abstract_state)
-  with mesh, nn_partitioning.axis_rules(config.logical_axis_rules):
-    state_mesh_annotations = nn.logical_to_mesh(state_logical_annotations)
-  return state_mesh_annotations
-
-
 def print_pytree_shape(print_str, ptree):
   print("\n")
   print(print_str)
@@ -1041,14 +884,6 @@ def summarize_pytree_data(params, name="Params", raw=False):
         f"\tAvg size: {avg_param_size:.3f} bytes\n"
     )
   return num_params, total_param_size, avg_param_size
-
-
-def save_quantized_checkpoint_if_configured(config, params):
-  assert config.quantization, "quantization must be configured"
-  if config.save_quantized_params_path:
-    checkpointing.save_params_to_path(config.save_quantized_params_path, params)
-  else:
-    "Skipping saving quantized checkpoint as save_quantized_params_path is null."
 
 
 def print_mem_stats(label: str):

@@ -16,13 +16,12 @@ limitations under the License.
 
 # pylint: disable=g-bad-todo, abstract-method, consider-using-with, ungrouped-imports, attribute-error
 """
-This script implements Group Relative Policy Optimization (GRPO) training 
-using JAX. It optimizes a language model with reinforcement learning by 
+This script implements Group Relative Policy Optimization (GRPO) training
+using JAX. It optimizes a language model with reinforcement learning by
 updating policy gradients based on reward functions
 """
 
 
-from collections import defaultdict
 import datetime
 import os
 import sys
@@ -117,7 +116,8 @@ def grpo_loss_fn(model, config, data, dropout_rng, params, reference_params, is_
 
   This function performs the following steps:
 
-    1. Compute the per-token log-probabilities for the full sequence (prompt + completion) both with the current model (policy) and the reference model.
+    1. Compute the per-token log-probabilities for the full sequence (prompt + completion) both with
+         the current model (policy) and the reference model.
     2. Compute a per-token KL divergence:
          kl = exp(ref_logp - policy_logp) - (ref_logp - policy_logp) - 1.
     3. Compute a scalar reward for each generated completion via reward_fn.
@@ -344,9 +344,7 @@ def concatenate_prompt_with_completions(config, tokenizer_model, prompts, true_l
 
     return full_seq, eos_index
 
-  batched_concat_and_eos = jax.vmap(
-      lambda prompt, true_len, completion: _concat_and_find_eos(prompt, true_len, completion), in_axes=(0, 0, 0)
-  )
+  batched_concat_and_eos = jax.vmap(_concat_and_find_eos, in_axes=(0, 0, 0))
   prompts = jnp.repeat(prompts, config.num_generations, axis=0)
   true_length = jnp.repeat(true_length, config.num_generations, axis=0)
   prompt_completions, eos_positions = batched_concat_and_eos(prompts, true_length, completions)
@@ -371,7 +369,7 @@ def generate_completions(config, tokenizer_model, engine, data, params, rng):
   """
   # decimate proportion of data when per_device_batch_size<1
   for k, v in data.items():
-    assert v.ndim == 1 or v.ndim == 2, f"Invalid {v.shape=} found for key={k}"
+    assert v.ndim in (1, 2), f"Invalid {v.shape=} found for key={k}"
     if v.ndim == 2:
       data[k] = v[: config.micro_batch_size_to_train_on, :]
     else:
@@ -545,7 +543,7 @@ def train_step(model, config, state_mesh_shardings, state, data, dropout_rng):
         + grad_and_loss["moe_lb_loss"] / config.gradient_accumulation_steps
     )
     raw_grads = jax.tree_util.tree_map(lambda arr: arr / grad_and_loss["total_weights"], grad_and_loss["grad"])
-    aux = jax.tree_map(lambda x: jnp.sum(x, axis=0), aux)
+    aux = jax.tree.map(lambda x: jnp.sum(x, axis=0), aux)
   else:
     if config.optimizer_memory_host_offload:
       cast_params = jax.device_put(state.params, max_utils.with_memory_kind(state_mesh_shardings.params, "device"))
@@ -651,7 +649,7 @@ def setup_train_loop(config):
   record_goodput(recorder, config, recorder.record_tpu_init_end_time if recorder else None)
   record_goodput(recorder, config, recorder.record_training_preparation_start_time if recorder else None)
   data_iterator, eval_data_iterator = grpo_input_pipeline.create_data_iterator(config, mesh)
-  state, _, state_mesh_shardings, data_iterator = max_utils.setup_training_state(
+  state, _, state_mesh_shardings, data_iterator = maxtext_utils.setup_training_state(
       model, data_iterator, tx, config, init_rng, mesh, checkpoint_manager
   )
 
@@ -747,7 +745,7 @@ def train_loop(config, config_inference, state=None):
   # Write train config params, num model params, and XLA flags to tensorboard
   max_utils.add_text_to_summary_writer("num_model_parameters", str(num_model_parameters), writer)
   max_utils.add_text_to_summary_writer("libtpu_init_args", os.environ["LIBTPU_INIT_ARGS"], writer)
-  max_utils.add_config_to_summary_writer(config, writer)
+  maxtext_utils.add_config_to_summary_writer(config, writer)
 
   # Define the compilation of functional_train, either by loading the compiled version or wrapping a new one in a jit
   if config.compiled_trainstep_file != "":

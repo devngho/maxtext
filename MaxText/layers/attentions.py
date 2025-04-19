@@ -625,12 +625,13 @@ class AttentionOp(nn.Module):
 
     _, _, _, head_dim = query.shape  # pylint: disable=unused-variable
 
-    using_context_parallelism = self.mesh.shape['context'] > 1
+    using_context_parallelism = self.mesh.shape["context"] > 1
 
     if self.attention_type == AttentionType.LOCAL_SLIDING and using_context_parallelism:
       raise AssertionError("Sliding window attention is not supported when context parallelism is enabled")
 
-    sliding_window_size = self.sliding_window_size
+    sliding_window_size = None
+
     if self.attention_type == AttentionType.LOCAL_SLIDING or not self.config.enable_padding_causal_mask:
       sliding_window_size = [self.sliding_window_size, 0]
 
@@ -653,7 +654,7 @@ class AttentionOp(nn.Module):
         dtype=self.dtype,
         float32_logits=self.float32_logits,
         qkv_layout="BSHD_BSHD_BSHD",  # 'BS3HD', 'BSHD_BS2HD' or 'BSHD_BSHD_BSHD'
-        scale_factor=1.0 / math.sqrt(head_dim),
+        scale_factor=1.0,
         transpose_batch_sequence=False,
         window_size=sliding_window_size,
         context_parallel_causal_load_balanced=self.config.context_parallel_load_balance,
@@ -933,6 +934,21 @@ class AttentionOp(nn.Module):
       return prefill_unnormalized_output / prefill_exponentials_sum
 
 
+class L2Norm(nn.Module):
+  """
+  Implementation of L2Norm in JAX.
+
+  Attributes:
+    eps: float, epsilon used for numerical stability (default value should be ok for most cases).
+  """
+
+  eps: float = 1e-6
+
+  @nn.compact
+  def __call__(self, x):
+    return x * jax.lax.rsqrt(jnp.mean(x**2, axis=-1, keepdims=True) + self.eps)
+
+
 class Attention(nn.Module):
   """Generic Attention.
 
@@ -955,6 +971,7 @@ class Attention(nn.Module):
       numerical issues with bfloat16.
     quant: Quant, stores quantization parameters, defaults to None implying no quantization.
     kv_quant: KVQuant, stores KV cache quantization parameters, defaults to None
+    is_nope_layer: bool, whether to skip RoPE on this Attention layer
   """
 
   config: Config
@@ -1000,6 +1017,8 @@ class Attention(nn.Module):
   ar_cache_axis_order: AxisIdxes = (1, 2, 0, 3)
   compute_axis_order: AxisIdxes = (0, 1, 2, 3)
   reshape_q: bool = False
+
+  is_nope_layer: bool = False
 
   def setup(self):
     self.attention_op = AttentionOp(
@@ -1263,8 +1282,9 @@ class Attention(nn.Module):
       query = self.query_projection(inputs_q)
       key = self.kv_projection(inputs_kv, proj_name="key")
       value = self.kv_projection(inputs_kv, proj_name="value")
-
-      if self.use_qk_norm:
+      is_llama4_decoder_block = self.config.decoder_block == "llama4"
+      # NOTE: llama 4 does L2 normalization after RoPE
+      if self.use_qk_norm and not is_llama4_decoder_block:
         query = RMSNorm(
             dtype=self.config.dtype,
             weight_dtype=self.config.weight_dtype,
@@ -1281,9 +1301,19 @@ class Attention(nn.Module):
             kernel_axes=("norm",),
         )(key)
 
-    # apply ROPE
-    query = self.apply_rotary_embedding(query, inputs_positions, name="query_rotary")
-    key = self.apply_rotary_embedding(key, inputs_positions, name="key_rotary")
+    # NOTE: is_nope_layer should be used in attention mask and also used in attention tuning
+    use_rope = not self.is_nope_layer
+    use_qk_norm = self.use_qk_norm and use_rope
+
+    if use_rope:
+      query = self.apply_rotary_embedding(query, inputs_positions, name="query_rotary")
+      key = self.apply_rotary_embedding(key, inputs_positions, name="key_rotary")
+
+    if use_qk_norm and is_llama4_decoder_block:
+      l2_norm = L2Norm(self.config.normalization_layer_epsilon)
+      query = l2_norm(query)
+      key = l2_norm(key)
+
     # apply query_pre_attn_scalar if it's present.
     if self.query_pre_attn_scalar and self.query_pre_attn_scalar != 1.0:
       query = query * self.query_pre_attn_scalar
