@@ -132,7 +132,16 @@ def preprocessing_pipeline(
 
       dataset = dataset.with_transform(transform)
   else:
-    dataset = dataset.select_columns(data_column_names + ["s_token_count_"+data_column_names[0], "s_rows_count_"+data_column_names[0]])
+    def calc_metrics(x):
+      token_counts = {'s_token_count_' + column_name: [[len(x[column_name][i])] for i in range(len(x[column_name]))] for column_name in data_column_names_}
+      rows_counts = {'s_rows_count_' + column_name: [[1] for _ in range(len(x[column_name]))] for column_name in data_column_names_}
+
+      x.update(token_counts)
+      x.update(rows_counts)
+
+      return x
+
+    dataset = dataset.with_transform(calc_metrics).select_columns(data_column_names + ["s_token_count_"+data_column_names[0], "s_rows_count_"+data_column_names[0]])
 
   if not random_access:
     dataset = _input_pipeline_utils.HFDataSource(

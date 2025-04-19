@@ -685,4 +685,16 @@ wandb_token: ''
 
 jax_debug_nans: False
 
-cumulative_metrics: ['tokens_count_text', "rows_count_text"]
+cumulative_metrics: ['tokens_count_inputs', "rows_count_inputs"]
+
+# Llama4-specific
+# Whether to apply Query/Key normalization.
+# NOTE: non-Llama4 models use RMSNorm before RoPE
+# whereas Llama4 models use L2Norm after RoPE
+use_qk_norm: False
+# Every `X` layers will NOT use RoPE
+nope_layer_interval: -1
+
+# Multimodal flags
+use_multimodal: False
+image_size_for_vit: 896 # Default for Gemma3, and should be overwritten by model's config
