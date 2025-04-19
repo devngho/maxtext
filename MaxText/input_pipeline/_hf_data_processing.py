@@ -119,6 +119,23 @@ def preprocessing_pipeline(
       )
       dataset = dataset.select_columns(data_column_names + ["s_token_count", "s_rows_count"])
     else:
+      if tokenizer_path is not None:
+        tokenizer = transformers.AutoTokenizer.from_pretrained(
+          tokenizer_path,
+          add_bos_token=add_bos if not use_sft else False,
+          add_eos_token=add_eos if not use_sft else False,
+          legacy=False,
+          token=hf_access_token,
+        )
+        if tokenizer.pad_token_id is not None:
+          pad_id = tokenizer.pad_token_id
+        elif tokenizer.unk_token_id is not None:
+          pad_id = tokenizer.unk_token_id
+        else:
+          pad_id = -1
+      else:
+        pad_id = -1
+
       def transform(x):
           ids = _input_pipeline_utils.tokenization(x, hf_tokenizer=tokenizer, max_length=max_target_length - 1, column_names=data_column_names_, truncation=True if not use_sft else False)
 
