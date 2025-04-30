@@ -89,7 +89,7 @@ def _possibly_unroll_params(config, training_state, training_state_annotations, 
     unroll_layer_group(config.num_decoder_layers, layer_name="layers")
 
 
-def _read_train_checkpoint(config, checkpoint_manager, mesh, step=None):
+def _read_train_checkpoint(config, checkpoint_manager, mesh):
   """Read training checkpoint at path defined by load_full_state_path."""
   # Model and Optimizer definition
   quant = quantizations.configure_quantization(config)
@@ -98,7 +98,7 @@ def _read_train_checkpoint(config, checkpoint_manager, mesh, step=None):
   learning_rate_schedule = maxtext_utils.create_learning_rate_schedule(config)
   tx = optimizers.get_optimizer(config, learning_rate_schedule)
   state, state_mesh_notations, _, _ = maxtext_utils.setup_training_state(
-      model, None, tx, config, rng, mesh, checkpoint_manager, step
+      model, None, tx, config, rng, mesh, checkpoint_manager
   )
   num_params = max_utils.calculate_num_params_from_pytree(state.params)
   max_logging.log(f"In input checkpoint Number of model params={num_params/1e9:.3f} billion")

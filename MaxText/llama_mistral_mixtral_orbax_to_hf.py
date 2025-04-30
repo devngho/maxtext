@@ -90,7 +90,7 @@ def load_hf_model(model_size):
   return model
 
 
-def load_model_state(config, step):
+def load_model_state(config):
   """
   Loads the MaxText model's TrainState from the Orbax checkpoint
   """
@@ -107,7 +107,7 @@ def load_model_state(config, step):
 
   # Read training state from config.load_paramaters_path
   max_logging.log(f"Read training checkpoint from: {config.load_full_state_path}")
-  training_state, _ = _read_train_checkpoint(config, checkpoint_manager, mesh, step)
+  training_state, _ = _read_train_checkpoint(config, checkpoint_manager, mesh)
   return training_state
 
 
@@ -257,28 +257,27 @@ def convert_state_to_hf(training_state, hf_model, model_size):
   return hf_model_params
 
 
-def convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, config):
+def convert_orbax_hf(hf_model_path, push_to_hub, repo_id, config):
   """
   Landing function to convert MaxText model's checkpoint to HuggingFace format
   """
   hf_model = load_hf_model(config.model_name)
   if config.weight_dtype == "bfloat16":
     hf_model = hf_model.to(torch.bfloat16)
-  training_state = load_model_state(config, step)
+  training_state = load_model_state(config)
   new_hf_model_params = convert_state_to_hf(training_state, hf_model, config.model_name)
   print(f"Saving HuggingFace model to path = {hf_model_path}")
   hf_model.save_pretrained(hf_model_path, state_dict=new_hf_model_params, push_to_hub=push_to_hub, repo_id=repo_id)
 
 
 def main(argv: Sequence[str]):
-  config = pyconfig.initialize(argv[:-4])
-  hf_model_path = argv[-4].split("=")[1]
-  step = int(argv[-3].split("=")[1])
+  config = pyconfig.initialize(argv[:-3])
+  hf_model_path = argv[-3].split("=")[1]
   push_to_hub = bool(argv[-2].split("=")[1])
   repo_id = argv[-1].split("=")[1]
-  print(f"Will save converted HuggingFace checkpoint to path = {hf_model_path} at step = {step}")
+  print(f"Will save converted HuggingFace checkpoint to path = {hf_model_path}")
 
-  convert_orbax_hf(hf_model_path, step, push_to_hub, repo_id, config)
+  convert_orbax_hf(hf_model_path, push_to_hub, repo_id, config)
 
 
 if __name__ == "__main__":
